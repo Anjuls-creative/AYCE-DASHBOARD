@@ -1,0 +1,13 @@
+id_harga,id_paket,waktu,hari,harga
+H001,P001,Lunch,Weekday,99000
+H002,P001,Lunch,Weekend,119000
+H003,P001,Dinner,Weekday,119000
+H004,P001,Dinner,Weekend,139000
+H005,P002,Lunch,Weekday,139000
+H006,P002,Lunch,Weekend,159000
+H007,P002,Dinner,Weekday,159000
+H008,P002,Dinner,Weekend,179000
+H009,P003,Lunch,Weekday,199000
+H010,P003,Lunch,Weekend,219000
+H011,P003,Dinner,Weekday,219000
+H012,P003,Dinner,Weekend,239000

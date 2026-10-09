@@ -1,0 +1,51 @@
+id_menu,nama_menu,kategori,paket_minimal,sistem_penyajian,status
+M001,Beef Slice,Makanan,P001,Table Service,Tersedia
+M002,Chicken Slice,Makanan,P001,Table Service,Tersedia
+M003,Wagyu Slice,Makanan,P003,Table Service,Tersedia
+M004,Jamur Enoki,Makanan,P001,Self Service,Tersedia
+M005,Sawi Putih,Makanan,P001,Self Service,Tersedia
+M006,Es Teh,Minuman,P001,Self Service,Tersedia
+M007,Ice Cream,Dessert,P001,Self Service,Tersedia
+M008,Beef Short Plate,Makanan,P001,Table Service,Tersedia
+M009,Chicken Karaage,Makanan,P001,Table Service,Tersedia
+M010,Beef Tongue Slice,Makanan,P002,Table Service,Tersedia
+M011,Beef Karubi,Makanan,P002,Table Service,Tersedia
+M012,Beef Sirloin,Makanan,P002,Table Service,Tersedia
+M013,Beef Ribeye,Makanan,P002,Table Service,Tersedia
+M014,Salmon Slice,Makanan,P002,Table Service,Tersedia
+M015,Udang Jumbo,Makanan,P002,Table Service,Tersedia
+M016,Cumi Segar,Makanan,P002,Table Service,Habis
+M017,Beef Kalbi Marinasi,Makanan,P002,Table Service,Tersedia
+M018,Wagyu Karubi,Makanan,P003,Table Service,Tersedia
+M019,Wagyu Ribeye,Makanan,P003,Table Service,Tersedia
+M020,Wagyu Tenderloin,Makanan,P003,Table Service,Tersedia
+M021,Wagyu Tongue,Makanan,P003,Table Service,Habis
+M022,Scallop,Makanan,P003,Table Service,Tersedia
+M023,Kepiting Soft Shell,Makanan,P003,Table Service,Tersedia
+M024,Bakso Sapi,Makanan,P001,Self Service,Tersedia
+M025,Tahu Putih,Makanan,P001,Self Service,Tersedia
+M026,Jagung Manis,Makanan,P001,Self Service,Tersedia
+M027,Kentang,Makanan,P001,Self Service,Tersedia
+M028,Wortel,Makanan,P001,Self Service,Tersedia
+M029,Pok Choy,Makanan,P001,Self Service,Tersedia
+M030,Bayam,Makanan,P001,Self Service,Tersedia
+M031,Jamur Shiitake,Makanan,P001,Self Service,Tersedia
+M032,Jamur Kuping,Makanan,P001,Self Service,Tersedia
+M033,Nasi Putih,Makanan,P001,Self Service,Tersedia
+M034,Mie Udon,Makanan,P001,Self Service,Tersedia
+M035,Telur Ayam,Makanan,P001,Self Service,Tersedia
+M036,Kimchi,Makanan,P001,Self Service,Tersedia
+M037,Saus Wijen,Makanan,P001,Self Service,Tersedia
+M038,Saus Ponzu,Makanan,P001,Self Service,Tersedia
+M039,Teh Panas,Minuman,P001,Self Service,Tersedia
+M040,Air Mineral,Minuman,P001,Self Service,Tersedia
+M041,Lemon Tea,Minuman,P001,Self Service,Tersedia
+M042,Soda Gembira,Minuman,P001,Self Service,Tersedia
+M043,Jus Jeruk Segar,Minuman,P002,Self Service,Tersedia
+M044,Melon Squash,Minuman,P002,Self Service,Tersedia
+M045,Puding Karamel,Dessert,P001,Self Service,Tersedia
+M046,Buah Potong,Dessert,P001,Self Service,Tersedia
+M047,Agar-agar,Dessert,P001,Self Service,Tersedia
+M048,Gelato Premium,Dessert,P002,Self Service,Tersedia
+M049,Mochi Ice Cream,Dessert,P003,Self Service,Tersedia
+M050,Cheesecake Slice,Dessert,P003,Self Service,Habis
