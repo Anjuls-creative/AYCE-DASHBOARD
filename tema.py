@@ -1,11 +1,29 @@
-"""Tema & komponen tampilan bersama (CSS, brand, header, tiles)."""
+"""
+tema.py — TAMPILAN BERSAMA (warna, CSS, komponen kecil yang dipakai semua halaman).
+
+╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
+║ Mau ubah ...                       → cari bagian ...          ║
+║ • Warna utama oranye / indigo      → "PALET WARNA"            ║
+║ • Warna latar halaman (peach)      → ".stApp" di dalam _CSS   ║
+║ • Lebar / sudut kotak putih        → "[class*=st-key-card_]"  ║
+║ • Nama brand di sidebar            → brand_html()             ║
+║ • Tampilan menu kiri (nav)         → "Navigasi kustom"        ║
+║ • Kotak angka kecil (tiles)        → ".tiles" & tiles()       ║
+╚═══════════════════════════════════════════════════════════════╝
+Tip: warna tombol & radio diatur di .streamlit/config.toml (primaryColor), bukan di file ini.
+Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
+"""
 
 from html import escape
 from urllib.parse import quote
 
 import streamlit as st
 
-# Palet warna (mengikuti referensi: oranye + indigo di atas latar peach)
+# ===== PALET WARNA =====
+# UBAH: ganti kode warna heksadesimal di bawah untuk mengubah tema seluruh aplikasi.
+#   ORANYE = warna utama (ikon, garis chart Pagi, batang bar) | INDIGO = garis chart Malam
+#   TEKS = warna teks gelap | ABU = teks keterangan
+# Catatan: sebagian warna juga tertulis langsung di _CSS (mis. #FF7A45, #FF4D1C untuk gradasi ikon).
 ORANYE = "#FF5B1F"
 ORANYE_MUDA = "#FF9B73"
 ORANYE_PUDAR = "#FFD3BF"
@@ -14,6 +32,8 @@ TEKS = "#1B2236"
 ABU = "#8A94A6"
 
 
+# ===== IKON (SVG kecil untuk kartu KPI & logo) =====
+# UBAH: ganti isi path SVG untuk mengganti ikon (gaya "lucide"/garis, warna putih).
 def _icon_uri(inner_svg: str) -> str:
     """Ubah path SVG (putih) menjadi data-URI untuk dipakai di CSS."""
     svg = (
@@ -38,6 +58,8 @@ ICON_USERS = _icon_uri(
     "<path d='M22 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/>"
 )
 
+# ===== CSS UTAMA =====
+# Tiap blok diberi judul /* ---------- ... ---------- */. Token __NAMA__ diganti otomatis oleh kode di bawah.
 _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
@@ -155,6 +177,11 @@ header[data-testid="stHeader"] { background: transparent; }
 .card-sub { font-size: 0.78rem; color: __ABU__; margin-bottom: 0.6rem; }
 .card-sub b { color: #16A34A; font-weight: 700; }
 
+/* ---------- Daftar topping (halaman Input Pesanan) ---------- */
+.top-name { font-weight: 700; font-size: 0.88rem; color: __TEKS__; line-height: 1.25; }
+.top-price { font-size: 0.74rem; color: __ABU__; margin-bottom: 0.1rem; }
+.top-habis { color: #DC2626; font-weight: 700; }
+
 /* ---------- Tiles ringkasan ---------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0.4rem 0 1.1rem 0; }
 .tile { background: #fff; border-radius: 16px; padding: 14px 16px; box-shadow: 0 2px 12px rgba(30, 41, 59, 0.05); }
@@ -185,8 +212,9 @@ for _token, _value in {
 _CSS_MIN = "\n".join(line for line in _CSS.splitlines() if line.strip())
 
 
+# ===== FUNGSI KOMPONEN (dipanggil dari halaman lain) =====
 def terapkan():
-    """Suntik CSS tema ke halaman."""
+    """Suntik CSS tema ke halaman. Dipanggil sekali di app.py."""
     st.markdown(f"<style>{_CSS_MIN}</style>", unsafe_allow_html=True)
 
 
@@ -200,6 +228,7 @@ def sembunyikan_sidebar():
 
 
 def brand_html() -> str:
+    """Logo + nama brand di sidebar/login. UBAH: ganti teks 'AYCE' dan 'Dash' di bawah dengan nama restoran Anda."""
     return (
         '<div class="brand"><div class="brand-ico"></div>'
         '<div class="brand-name">AYCE<span>Dash</span></div></div>'
@@ -207,6 +236,7 @@ def brand_html() -> str:
 
 
 def user_chip(user: dict) -> str:
+    """Kotak kecil 'siapa yang login' di sidebar. UBAH: teks peran ('Bos'/'Pegawai') ada di bawah."""
     nama = escape(str(user.get("nama") or user.get("username") or "?"))
     role = "Bos" if user.get("role") == "bos" else "Pegawai"
     return (
@@ -217,6 +247,7 @@ def user_chip(user: dict) -> str:
 
 
 def header(crumb: str, judul: str, pill: str = ""):
+    """Judul halaman: 'Pages / <crumb>' kecil di atas, <judul> besar, <pill> kotak info di kanan (opsional)."""
     kanan = f'<div class="pill">{pill}</div>' if pill else ""
     st.markdown(
         '<div class="page-head"><div>'
@@ -227,6 +258,7 @@ def header(crumb: str, judul: str, pill: str = ""):
 
 
 def judul_kartu(judul: str, sub: str = ""):
+    """Judul + keterangan kecil di dalam kartu putih."""
     st.markdown(
         f'<div class="card-title">{judul}</div><div class="card-sub">{sub}</div>',
         unsafe_allow_html=True,
@@ -234,7 +266,7 @@ def judul_kartu(judul: str, sub: str = ""):
 
 
 def tiles(items):
-    """items: list of (label, nilai, keterangan)."""
+    """Deretan kotak angka. items = list of (label, nilai, keterangan). Dipakai untuk rekap & ringkasan harga."""
     html = "".join(
         f'<div class="tile"><div class="t-l">{l}</div><div class="t-v">{v}</div><div class="t-s">{s}</div></div>'
         for l, v, s in items

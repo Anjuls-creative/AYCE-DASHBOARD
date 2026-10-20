@@ -1,4 +1,17 @@
-"""Halaman Data Masuk & Unduh (peran: bos)."""
+"""
+data_masuk.py — HALAMAN BOS: melihat data yang baru masuk + mengunduh CSV.
+
+╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
+║ Mau ubah ...                       → cari bagian ...          ║
+║ • Siapa boleh membuka halaman      → auth.wajib("bos") di     ║
+║                                      halaman_data_masuk()     ║
+║ • Kotak ringkasan di atas          → _tab_baru() → tema.tiles ║
+║ • Kolom tabel aktivitas            → _tab_baru() → v[[...]]   ║
+║ • Daftar file yang bisa diunduh    → store.URUTAN_FILE        ║
+║ • Jumlah baris pratinjau (200)     → _tab_unduh() → .tail(200)║
+╚═══════════════════════════════════════════════════════════════╝
+Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +27,9 @@ def _tabel(df: pd.DataFrame, tinggi: int = 300):
     st.dataframe(df, hide_index=True, height=tinggi)
 
 
+# ===========================================================================
+# TAB 1 — DATA BARU MASUK (dari log_input.csv)
+# ===========================================================================
 def _tab_baru():
     log = store.baca(store.LOG_NAMA)
     if log.empty:
@@ -21,11 +37,12 @@ def _tab_baru():
         return
 
     aktif = log[log["status"] == "Aktif"]
+    # UBAH: kotak ringkasan di bagian atas
     tema.tiles([
-        ("Input aktif", store.angka(aktif["id_aksi"].nunique()), "aksi simpan"),
+        ("Input aktif", store.angka(aktif["id_aksi"].nunique()), "kali simpan"),
         ("Baris data baru", store.angka(len(aktif)), "di semua file CSV"),
         ("Petugas", store.angka(aktif["petugas"].nunique()), ", ".join(sorted(aktif["petugas"].unique())) or "-"),
-        ("Dibatalkan", store.angka(log.loc[log["status"] == "Dibatalkan", "id_aksi"].nunique()), "aksi dibatalkan petugas"),
+        ("Dibatalkan", store.angka(log.loc[log["status"] == "Dibatalkan", "id_aksi"].nunique()), "input dibatalkan petugas"),
         ("Input terakhir", aktif["waktu_input"].max()[11:16] if not aktif.empty else "-",
          aktif["waktu_input"].max()[:10] if not aktif.empty else ""),
     ])
@@ -45,7 +62,7 @@ def _tab_baru():
         if v.empty:
             st.info("Tidak ada aktivitas untuk filter ini.")
         else:
-            _tabel(v[["waktu_input", "petugas", "tabel", "id_record", "ringkasan", "status"]], 340)
+            _tabel(v[["waktu_input", "petugas", "tabel", "id_record", "ringkasan", "status"]], 340)  # UBAH: kolom yang tampil
 
     with st.container(key="card_isibaru"):
         tema.judul_kartu("Isi Data Baru per Tabel", "Hanya baris yang masuk lewat aplikasi (bukan data awal).")
@@ -58,6 +75,9 @@ def _tab_baru():
                     _tabel(store.baris_baru(nama), 300)
 
 
+# ===========================================================================
+# TAB 2 — UNDUH CSV + PRATINJAU + DIAGNOSTIK
+# ===========================================================================
 def _tab_unduh():
     files = store.daftar_file()
     with st.container(key="card_unduh"):
@@ -77,25 +97,36 @@ def _tab_unduh():
         h1.markdown("**File**")
         h2.markdown("**Baris**")
         h3.markdown("**Ukuran**")
-        for nama, p in files:
+        for nama in files:
             c1, c2, c3, c4 = st.columns([3, 1, 1, 2])
-            n_baris = len(store.baca(nama))
+            data = store.bytes_csv(nama)
             c1.markdown(f"`{nama}.csv`")
-            c2.write(store.angka(n_baris))
-            c3.write(f"{p.stat().st_size / 1024:,.0f} KB")
-            c4.download_button("Unduh", data=p.read_bytes(), file_name=f"{nama}.csv", mime="text/csv", key=f"dl_{nama}")
+            c2.write(store.angka(len(store.baca(nama))))
+            c3.write(f"{len(data) / 1024:,.0f} KB")
+            c4.download_button("Unduh", data=data, file_name=f"{nama}.csv", mime="text/csv", key=f"dl_{nama}")
 
     with st.container(key="card_pratinjau"):
-        tema.judul_kartu("Pratinjau Isi File", "Menampilkan 200 baris terakhir.")
-        pilih = st.selectbox("File", [n for n, _ in files], key="pratinjau_file")
+        tema.judul_kartu("Pratinjau Isi File", "Menampilkan 200 baris terakhir.")  # UBAH: angka 200 juga ada di .tail(200)
+        pilih = st.selectbox("File", files, key="pratinjau_file")
         df = store.baca(pilih)
         st.caption(f"{store.angka(len(df))} baris total")
         _tabel(df.tail(200).iloc[::-1], 340)
 
+    with st.expander("🔧 Diagnostik lokasi data (untuk melacak masalah data hilang)"):
+        st.caption(
+            "Menunjukkan dari file mana tiap tabel dibaca. Dashboard, input, dan unduhan semuanya memakai "
+            "lokasi yang sama. Jika jumlah baris tidak sesuai harapan, kirim tabel ini ke pembuat aplikasi."
+        )
+        _tabel(pd.DataFrame(store.info_sumber()), 420)
+        st.caption(f"Folder data aktif: `{store.DATA_DIR}`")
 
+
+# ===========================================================================
+# HALAMAN
+# ===========================================================================
 def halaman_data_masuk():
-    auth.wajib("bos")
-    tema.header("Data Masuk & Unduh", "Data Masuk & Unduh CSV")
+    auth.wajib("bos")  # UBAH: ganti/tambah peran yang boleh membuka halaman ini
+    tema.header("Data Masuk & Unduh", "Data Masuk & Unduh CSV")  # UBAH: judul halaman
     if st.button("🔄 Muat ulang", key="btn_muat_ulang"):
         st.rerun()
     tab1, tab2 = st.tabs(["🆕 Data Baru Masuk", "⬇️ Unduh CSV"])

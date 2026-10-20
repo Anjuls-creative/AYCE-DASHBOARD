@@ -1,17 +1,24 @@
 """
-Halaman Dashboard — Plotly.
+dashboard.py — HALAMAN DASHBOARD (KPI + grafik Plotly).
 
-Sumber data (dicari berurutan):
-  1. data/<nama>.csv
-  2. <nama>.csv (sejajar dengan app.py)
-  3. tabel <nama> di ayce.db (cadangan)
-Tabel yang dipakai: transaksi, reservasi, paket, (opsional) meja.
-Cache otomatis diperbarui saat ada input baru (kunci cache = waktu ubah file).
+╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
+║ Mau ubah ...                       → cari bagian ...          ║
+║ • Tanggal paling awal yang bisa    → TANGGAL_PALING_AWAL      ║
+║   dipilih di filter                                           ║
+║ • Batas jam shift Pagi/Malam       → BATAS_SHIFT_JAM          ║
+║ • Filter di sidebar                → blok "FILTER SIDEBAR"    ║
+║ • Rumus 3 kartu KPI                → blok "KPI"               ║
+║ • Grafik batang 'Paket Favorit'    → blok "BAR CHART"         ║
+║ • Grafik garis 'Omzet per Shift'   → blok "LINE CHART"        ║
+║ • Warna grafik                     → tema.py (PALET WARNA)    ║
+╚═══════════════════════════════════════════════════════════════╝
+Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
+
+Data dibaca lewat store.baca() — pintu yang SAMA dengan yang dipakai saat input data,
+jadi dashboard selalu menampilkan data lama + data baru.
 """
 
-import sqlite3
-from datetime import timedelta
-from pathlib import Path
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,17 +26,20 @@ import streamlit as st
 
 import store
 import tema
-from tema import ABU, INDIGO, ORANYE, ORANYE_MUDA, ORANYE_PUDAR, TEKS
+from tema import INDIGO, ORANYE, ORANYE_MUDA, ORANYE_PUDAR, TEKS
 
-BASE_DIR = Path(__file__).parent
-BATAS_SHIFT_JAM = 15  # Pagi: mulai sebelum 15:00 | Malam: mulai 15:00 ke atas
+# UBAH: tanggal paling awal yang boleh dipilih di filter (walau belum ada data di tanggal itu).
+#       Tanggal paling AKHIR otomatis = hari ini (atau tanggal data terakhir bila lebih baru).
+TANGGAL_PALING_AWAL = date(2026, 1, 1)
+
+BATAS_SHIFT_JAM = 15  # UBAH: Pagi = mulai makan sebelum jam ini; Malam = jam ini ke atas
 BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 FONT = dict(family="Plus Jakarta Sans, sans-serif", color="#5B6475", size=12)
 
 
-# ---------------------------------------------------------------------------
-# Helper format
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# HELPER FORMAT
+# ===========================================================================
 def angka(v) -> str:
     return f"{v:,.0f}".replace(",", ".")
 
@@ -39,6 +49,7 @@ def rupiah(v) -> str:
 
 
 def fmt_tgl(d, tahun: bool = False) -> str:
+    """UBAH: format tanggal pendek (mis. '07 Okt' / '07 Okt 2026'); nama bulan ada di BULAN."""
     s = f"{d.day:02d} {BULAN[d.month - 1]}"
     return f"{s} {d.year}" if tahun else s
 
@@ -51,6 +62,7 @@ def persen_perubahan(sekarang, sebelumnya):
 
 
 def rapikan(fig, tinggi=350):
+    """Gaya dasar semua grafik (transparan, margin kecil, pemisah angka Indonesia)."""
     fig.update_layout(
         height=tinggi,
         margin=dict(l=0, r=0, t=8, b=0),
@@ -62,44 +74,31 @@ def rapikan(fig, tinggi=350):
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Load data
-# ---------------------------------------------------------------------------
-def _baca_tabel(nama: str):
-    """Baca tabel dari CSV (data/ atau root) lalu cadangan dari ayce.db. None jika tidak ada."""
-    for p in (BASE_DIR / "data" / f"{nama}.csv", BASE_DIR / f"{nama}.csv"):
-        if p.exists():
-            return pd.read_csv(p)
-    db = BASE_DIR / "ayce.db"
-    if db.exists():
-        try:
-            with sqlite3.connect(db) as con:
-                return pd.read_sql(f"SELECT * FROM {nama}", con)
-        except Exception:
-            return None
-    return None
-
-
+# ===========================================================================
+# MUAT DATA
+# ===========================================================================
 @st.cache_data(show_spinner="Memuat data...")
-def muat_data(versi):  # `versi` = penanda perubahan file -> cache dibuang otomatis saat ada input baru
-    trx = _baca_tabel("transaksi")
-    res = _baca_tabel("reservasi")
-    pak = _baca_tabel("paket")
-    meja = _baca_tabel("meja")
-
-    hilang = [n for n, d in (("transaksi", trx), ("reservasi", res), ("paket", pak)) if d is None]
-    if hilang:
-        raise FileNotFoundError(", ".join(hilang))
+def muat_data(versi):
+    """
+    Gabungkan transaksi + tipe kedatangan (dari reservasi) + nama paket + shift.
+    `versi` = penanda perubahan file; setiap ada input baru nilainya berubah sehingga cache dibuang.
+    """
+    trx = store.baca("transaksi")
+    res = store.baca("reservasi")
+    pak = store.baca("paket")
+    meja = store.baca("meja")
 
     trx = trx.copy()
     trx["tanggal"] = pd.to_datetime(trx["tanggal"])
+    for kolom in ("total_bayar", "jumlah_orang"):  # CSV dibaca sebagai teks -> ubah ke angka
+        trx[kolom] = pd.to_numeric(trx[kolom], errors="coerce").fillna(0)
 
-    # Shift berdasarkan jam mulai makan: Pagi < 15:00 <= Malam
-    jam = trx["waktu_mulai"].astype(str).str.split(":").str[0].astype(int)
+    # Shift berdasarkan jam mulai makan: Pagi < BATAS_SHIFT_JAM <= Malam
+    jam = pd.to_numeric(trx["waktu_mulai"].astype(str).str.split(":").str[0], errors="coerce").fillna(0).astype(int)
     trx["shift"] = ["Pagi" if j < BATAS_SHIFT_JAM else "Malam" for j in jam]
 
     # Tipe kedatangan dari tabel reservasi (Booking ditampilkan sebagai "Reservasi")
-    tipe = res[["id_reservasi", "tipe_kedatangan"]].copy()
+    tipe = res[["id_reservasi", "tipe_kedatangan"]].drop_duplicates("id_reservasi").copy()
     tipe["tipe"] = tipe["tipe_kedatangan"].replace({"Booking": "Reservasi"})
     trx = trx.merge(tipe[["id_reservasi", "tipe"]], on="id_reservasi", how="left")
 
@@ -107,41 +106,41 @@ def muat_data(versi):  # `versi` = penanda perubahan file -> cache dibuang otoma
     trx = trx.merge(pak[["id_paket", "nama_paket"]], on="id_paket", how="left")
     trx["nama_paket"] = trx["nama_paket"].fillna(trx["id_paket"])
 
-    total_meja = int(meja["id_meja"].nunique()) if meja is not None else None
+    total_meja = int(meja["id_meja"].nunique()) if not meja.empty else None
     return trx, pak, total_meja
 
 
-# ---------------------------------------------------------------------------
-# Halaman
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# HALAMAN
+# ===========================================================================
 def halaman_dashboard():
-    try:
-        trx, paket, total_meja = muat_data(store.versi_data())
-    except FileNotFoundError as e:
-        st.error(
-            f"Tabel yang diperlukan tidak ditemukan: **{e}**. "
-            "Pastikan folder `data/` (berisi file CSV) atau `ayce.db` berada di repo yang sama dengan `app.py`."
-        )
-        st.stop()
+    trx, paket, total_meja = muat_data(store.versi_data())
 
+    hari_ini = store.sekarang().date()
     if trx.empty:
-        st.warning("Belum ada transaksi di transaksi.csv.")
-        st.stop()
+        data_min = data_max = hari_ini
+    else:
+        data_min, data_max = trx["tanggal"].min().date(), trx["tanggal"].max().date()
 
-    DMIN = trx["tanggal"].min().date()
-    DMAX = trx["tanggal"].max().date()
+    # Batas pilihan tanggal TIDAK bergantung pada ada/tidaknya data:
+    #   awal = TANGGAL_PALING_AWAL (atau tanggal data pertama bila lebih awal)
+    #   akhir = hari ini (atau tanggal data terakhir bila lebih baru)
+    batas_min = min(TANGGAL_PALING_AWAL, data_min)
+    batas_max = max(hari_ini, data_max)
 
-    # ---- Filter sidebar ----
+    # =======================================================================
+    # FILTER SIDEBAR
+    # =======================================================================
     with st.sidebar:
         st.markdown('<div class="side-title">Filter</div>', unsafe_allow_html=True)
         rentang = st.date_input(
             "Rentang Tanggal",
-            value=(DMIN, DMAX),
-            min_value=DMIN,
-            max_value=DMAX,
+            value=(data_min, data_max),   # UBAH: rentang awal saat halaman dibuka (sekarang = seluruh data)
+            min_value=batas_min,
+            max_value=batas_max,
             format="DD/MM/YYYY",
         )
-        agregasi = st.radio("Agregasi Waktu", ["Per Hari", "Per Minggu"], index=0, horizontal=True)
+        agregasi = st.radio("Agregasi Waktu", ["Per Hari", "Per Minggu"], index=0, horizontal=True)  # index=0 → default Per Hari
         tipe_pilihan = st.multiselect(
             "Tipe Kedatangan",
             ["Walk-in", "Reservasi"],
@@ -151,7 +150,8 @@ def halaman_dashboard():
             '<div class="side-card"><div class="sc-title">Catatan Data</div>'
             '<div class="sc-text">Shift <b>Pagi</b>: mulai makan sebelum 15:00.<br>'
             "Shift <b>Malam</b>: mulai makan 15:00 ke atas.<br>"
-            f"Data {fmt_tgl(DMIN, True)} – {fmt_tgl(DMAX, True)} (termasuk input dari aplikasi).</div></div>",
+            f"Data transaksi: {fmt_tgl(data_min, True)} – {fmt_tgl(data_max, True)}. "
+            "Tanggal tanpa data ditampilkan 0.</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -162,42 +162,46 @@ def halaman_dashboard():
         elif len(rentang) == 1:
             mulai = akhir = rentang[0]
         else:
-            mulai, akhir = DMIN, DMAX
+            mulai, akhir = data_min, data_max
     else:
         mulai = akhir = rentang
 
-    # ---- Filter data ----
-    dasar = trx[trx["tipe"].isin(tipe_pilihan)]  # sudah terfilter tipe kedatangan (belum tanggal)
+    # =======================================================================
+    # FILTER DATA
+    # =======================================================================
+    dasar = trx[trx["tipe"].isin(tipe_pilihan)]  # terfilter tipe kedatangan (belum tanggal)
     cur = dasar[(dasar["tanggal"] >= pd.Timestamp(mulai)) & (dasar["tanggal"] <= pd.Timestamp(akhir))]
 
     label_tipe = " + ".join(tipe_pilihan) if tipe_pilihan else "—"
     tema.header(
         "Dashboard",
-        "Dashboard Restoran AYCE",
+        "Dashboard Restoran AYCE",  # UBAH: judul halaman
         f"📅 {fmt_tgl(mulai, True)} – {fmt_tgl(akhir, True)} &nbsp;·&nbsp; {label_tipe}",
     )
 
     if cur.empty:
-        st.warning(
-            "Tidak ada transaksi untuk filter yang dipilih. "
-            "Coba ubah rentang tanggal atau pilih minimal satu Tipe Kedatangan."
-        )
-        st.stop()
+        # TIDAK dihentikan: semua angka & grafik tetap tampil sebagai 0.
+        if not tipe_pilihan:
+            st.info("Pilih minimal satu Tipe Kedatangan. Sementara semua angka ditampilkan 0.")
+        else:
+            st.info("Tidak ada transaksi pada rentang tanggal ini — semua angka ditampilkan 0.")
 
-    # ---- KPI + perbandingan dengan periode sebelumnya ----
+    # =======================================================================
+    # KPI (3 kartu)  — UBAH rumus/label di sini
+    # =======================================================================
     jumlah_hari = (akhir - mulai).days + 1
     prev_akhir = mulai - timedelta(days=1)
     prev_mulai = prev_akhir - timedelta(days=jumlah_hari - 1)
     prev = None
-    if prev_mulai >= DMIN:  # bandingkan hanya jika periode sebelumnya masih dalam jangkauan data
+    if prev_mulai >= data_min:  # bandingkan hanya jika periode sebelumnya masih dalam jangkauan data
         prev = dasar[(dasar["tanggal"] >= pd.Timestamp(prev_mulai)) & (dasar["tanggal"] <= pd.Timestamp(prev_akhir))]
         if prev.empty:
             prev = None
 
-    total_pendapatan = int(cur["total_bayar"].sum())
-    meja_unik = int(cur["id_meja"].nunique())
-    total_pelanggan = int(cur["jumlah_orang"].sum())
-    sesi = len(cur)
+    total_pendapatan = int(cur["total_bayar"].sum())        # KPI 1: jumlah kolom total_bayar
+    meja_unik = int(cur["id_meja"].nunique())               # KPI 2: jumlah meja BERBEDA yang dipakai
+    total_pelanggan = int(cur["jumlah_orang"].sum())        # KPI 3: jumlah kolom jumlah_orang
+    sesi = len(cur)                                          # banyaknya transaksi
 
     if prev is not None:
         d_rev = persen_perubahan(total_pendapatan, int(prev["total_bayar"].sum()))
@@ -208,11 +212,14 @@ def halaman_dashboard():
         d_rev = d_meja = d_cust = None
         ket_delta = "Perbandingan muncul jika ada periode sebelumnya dengan panjang hari yang sama dalam data."
 
+    rata_trx = total_pendapatan / sesi if sesi else 0
+    rata_orang = total_pelanggan / sesi if sesi else 0
+
     k1, k2, k3 = st.columns(3, gap="medium")
     with k1:
         with st.container(key="kpi_rev"):
             st.metric("Total Pendapatan", rupiah(total_pendapatan), delta=d_rev, help=ket_delta)
-            st.caption(f"Rata-rata {rupiah(total_pendapatan / sesi)} per transaksi")
+            st.caption(f"Rata-rata {rupiah(rata_trx)} per transaksi")
     with k2:
         with st.container(key="kpi_meja"):
             st.metric("Total Meja Terisi", angka(meja_unik), delta=d_meja, help=ket_delta)
@@ -221,31 +228,33 @@ def halaman_dashboard():
     with k3:
         with st.container(key="kpi_cust"):
             st.metric("Total Pelanggan", angka(total_pelanggan), delta=d_cust, help=ket_delta)
-            st.caption(f"Rata-rata {total_pelanggan / sesi:.1f} orang per meja")
+            st.caption(f"Rata-rata {rata_orang:.1f} orang per meja")
 
     st.write("")  # jarak antar baris
 
-    col_bar, col_line = st.columns([2, 3], gap="medium")
+    col_bar, col_line = st.columns([2, 3], gap="medium")  # UBAH: rasio lebar kiri:kanan
 
-    # ---- Bar chart: Paket Paling Favorit ----
+    # =======================================================================
+    # BAR CHART — Paket Paling Favorit
+    # =======================================================================
     with col_bar:
         with st.container(key="card_bar"):
             urut = (
                 cur.groupby("nama_paket").size()
-                .reindex(paket["nama_paket"].tolist(), fill_value=0)
+                .reindex(paket["nama_paket"].tolist(), fill_value=0)   # paket tanpa transaksi tetap tampil (0)
                 .sort_values(ascending=False)
             )
             total_trx = int(urut.sum())
-            pangsa = urut / total_trx * 100
-            favorit = urut.index[0]
+            pangsa = (urut / total_trx * 100) if total_trx else urut * 0.0
 
-            st.markdown(
-                '<div class="card-title">Paket Paling Favorit</div>'
-                f'<div class="card-sub"><b>{favorit}</b> terlaris · {pangsa.iloc[0]:.0f}% dari {angka(total_trx)} transaksi</div>',
-                unsafe_allow_html=True,
-            )
+            if total_trx:
+                sub = f"<b>{urut.index[0]}</b> terlaris · {pangsa.iloc[0]:.0f}% dari {angka(total_trx)} transaksi"
+            else:
+                sub = "Belum ada transaksi pada rentang ini"
+            st.markdown(f'<div class="card-title">Paket Paling Favorit</div><div class="card-sub">{sub}</div>',
+                        unsafe_allow_html=True)
 
-            palet = [ORANYE, ORANYE_MUDA, ORANYE_PUDAR]
+            palet = [ORANYE, ORANYE_MUDA, ORANYE_PUDAR]  # warna batang peringkat 1,2,3 (lainnya = warna ke-3)
             warna = [palet[min(i, len(palet) - 1)] for i in range(len(urut))]
             puncak = max(int(urut.max()), 1)
 
@@ -278,17 +287,19 @@ def halaman_dashboard():
                 range=[0, puncak * 1.35], gridcolor="#EEF1F6", griddash="dot", zeroline=False,
                 tickformat=",.0f", title=None,
             )
-            rapikan(fig_bar, 360)
+            rapikan(fig_bar, 360)  # UBAH: tinggi grafik (piksel)
             st.plotly_chart(fig_bar, config={"displayModeBar": False}, key="chart_paket")
 
-    # ---- Line chart: omzet per shift ----
+    # =======================================================================
+    # LINE CHART — Omzet per Shift
+    # =======================================================================
     with col_line:
         with st.container(key="card_line"):
             mingguan = agregasi == "Per Minggu"
             ts_mulai, ts_akhir = pd.Timestamp(mulai), pd.Timestamp(akhir)
 
             if mingguan:
-                periode = cur["tanggal"] - pd.to_timedelta(cur["tanggal"].dt.weekday, unit="D")  # Senin
+                periode = cur["tanggal"] - pd.to_timedelta(cur["tanggal"].dt.weekday, unit="D")  # awal minggu = Senin
                 awal = ts_mulai - pd.Timedelta(days=ts_mulai.weekday())
                 idx = pd.date_range(awal, ts_akhir, freq="7D")
                 label = [f"{fmt_tgl(d)} – {fmt_tgl(d + pd.Timedelta(days=6))}" for d in idx]
@@ -299,13 +310,16 @@ def halaman_dashboard():
                 label = [fmt_tgl(d) for d in idx]
                 ket_agregasi = "per hari"
 
-            omzet = (
-                cur.assign(periode=periode)
-                .groupby(["periode", "shift"])["total_bayar"].sum()
-                .unstack("shift")
-                .reindex(index=idx, columns=["Pagi", "Malam"])
-                .fillna(0)
-            )
+            if cur.empty:
+                omzet = pd.DataFrame(0, index=idx, columns=["Pagi", "Malam"])  # tidak ada data -> garis di angka 0
+            else:
+                omzet = (
+                    cur.assign(periode=periode)
+                    .groupby(["periode", "shift"])["total_bayar"].sum()
+                    .unstack("shift")
+                    .reindex(index=idx, columns=["Pagi", "Malam"])
+                    .fillna(0)                       # periode tanpa data -> 0
+                )
             tot_pagi, tot_malam = int(omzet["Pagi"].sum()), int(omzet["Malam"].sum())
 
             st.markdown(
@@ -316,6 +330,7 @@ def halaman_dashboard():
             )
 
             mode = "lines+markers" if len(idx) <= 20 else "lines"
+            # UBAH: warna garis & isi area tiap shift, serta teks legenda
             garis = {
                 "Pagi": (ORANYE, "rgba(255,91,31,0.14)", "Pagi (< 15:00)"),
                 "Malam": (INDIGO, "rgba(59,47,201,0.08)", "Malam (≥ 15:00)"),
@@ -326,7 +341,7 @@ def halaman_dashboard():
                 fig_line.add_trace(
                     go.Scatter(
                         x=label,
-                        y=(nilai / 1_000_000).tolist(),
+                        y=(nilai / 1_000_000).tolist(),   # sumbu-y dalam JUTA rupiah
                         name=nama,
                         mode=mode,
                         line=dict(color=warna_g, width=3, shape="spline", smoothing=0.7),
@@ -343,13 +358,15 @@ def halaman_dashboard():
                 type="category", tickmode="array", tickvals=label[::langkah], ticktext=label[::langkah],
                 showgrid=False, linecolor="#E6EAF2", tickangle=0,
             )
+            nilai_maks = float(omzet.to_numpy().max())
             fig_line.update_yaxes(
                 title="Omzet (Rp juta)", gridcolor="#EEF1F6", griddash="dot", zeroline=False,
-                rangemode="tozero", tickformat=",.0f" if omzet.to_numpy().max() >= 10_000_000 else ",.1f",
+                range=[0, 1] if nilai_maks == 0 else None,   # semua nol -> sumbu tetap 0..1 agar rapi
+                rangemode="tozero", tickformat=",.0f" if nilai_maks >= 10_000_000 else ",.1f",
             )
             fig_line.update_layout(
                 hovermode="x unified",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
-            rapikan(fig_line, 360)
+            rapikan(fig_line, 360)  # UBAH: tinggi grafik (piksel)
             st.plotly_chart(fig_line, config={"displayModeBar": False}, key="chart_omzet")
