@@ -177,6 +177,16 @@ header[data-testid="stHeader"] { background: transparent; }
 .card-sub { font-size: 0.78rem; color: __ABU__; margin-bottom: 0.6rem; }
 .card-sub b { color: #16A34A; font-weight: 700; }
 
+/* ---------- Badge status & daftar fasilitas paket (halaman Input Pesanan) ---------- */
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; vertical-align: middle; margin-left: 6px; }
+.badge-makan { background: #FFF1EA; color: #E4501A; }
+.badge-bayar { background: #E8F7EE; color: #15803D; }
+.badge-lewat { background: #FDE8E8; color: #DC2626; }
+.fas-judul { font-weight: 800; font-size: 0.86rem; color: __TEKS__; margin-bottom: 0.25rem; }
+.fas-item { font-size: 0.8rem; color: #3B4357; line-height: 1.6; }
+.fas-baru { color: #E4501A; font-weight: 700; }
+.fas-habis { color: #9AA3B2; text-decoration: line-through; }
+
 /* ---------- Daftar topping (halaman Input Pesanan) ---------- */
 .top-name { font-weight: 700; font-size: 0.88rem; color: __TEKS__; line-height: 1.25; }
 .top-price { font-size: 0.74rem; color: __ABU__; margin-bottom: 0.1rem; }

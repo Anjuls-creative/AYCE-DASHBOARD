@@ -1,0 +1,14 @@
+id_minuman,nama_minuman,paket_minimal,status
+MN001,Es Teh,P001,Tersedia
+MN002,Teh Panas,P001,Tersedia
+MN003,Air Mineral,P001,Tersedia
+MN004,Lemon Tea,P001,Tersedia
+MN005,Soda Gembira,P001,Tersedia
+MN006,Jus Jeruk Segar,P002,Tersedia
+MN007,Melon Squash,P002,Tersedia
+MN008,Iced Latte,P002,Tersedia
+MN009,Lychee Tea,P002,Tersedia
+MN010,Matcha Latte,P003,Tersedia
+MN011,Mocktail Blue Ocean,P003,Tersedia
+MN012,Sparkling Yuzu,P003,Tersedia
+MN013,Thai Tea Premium,P003,Tersedia

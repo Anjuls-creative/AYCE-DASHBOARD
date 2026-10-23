@@ -1,0 +1,9 @@
+id_topping,nama_topping,paket_minimal,status
+TP001,Telur Onsen,P001,Tersedia
+TP002,Keju Mozzarella,P002,Tersedia
+TP003,Saus Truffle,P003,Tersedia
+TP004,Garlic Chips,P001,Tersedia
+TP005,Nori & Furikake,P001,Tersedia
+TP006,Boba Pearl,P002,Tersedia
+TP007,Oreo Crumble,P001,Tersedia
+TP008,Jelly Mix,P001,Tersedia
