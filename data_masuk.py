@@ -1,5 +1,5 @@
 """
-data_masuk.py — HALAMAN BOS: melihat data yang baru masuk + mengunduh CSV (bisa per tanggal).
+data_masuk.py — HALAMAN BOS: melihat data yang baru masuk + mengunduh CSV.
 
 ╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
 ║ Mau ubah ...                       → cari bagian ...          ║
@@ -7,10 +7,7 @@ data_masuk.py — HALAMAN BOS: melihat data yang baru masuk + mengunduh CSV (bis
 ║                                      halaman_data_masuk()     ║
 ║ • Kotak ringkasan di atas          → _tab_baru() → tema.tiles ║
 ║ • Kolom tabel aktivitas            → _tab_baru() → v[[...]]   ║
-║ • Filter tanggal unduhan           → _pilih_tanggal()         ║
 ║ • Daftar file yang bisa diunduh    → store.URUTAN_FILE        ║
-║ • File mana yang ikut difilter     → store.TABEL_BERTANGGAL   ║
-║   per tanggal                                                 ║
 ║ • Jumlah baris pratinjau (200)     → _tab_unduh() → .tail(200)║
 ╚═══════════════════════════════════════════════════════════════╝
 Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
@@ -31,39 +28,12 @@ def _tabel(df: pd.DataFrame, tinggi: int = 300):
 
 
 # ===========================================================================
-# TAB 1 — DATA BARU MASUK (dari log_input.csv) + PESANAN BERJALAN
+# TAB 1 — DATA BARU MASUK (dari log_input.csv)
 # ===========================================================================
-def _kartu_berjalan():
-    """Pesanan yang sedang makan / menunggu bayar (belum masuk CSV laporan)."""
-    pend = store.daftar_pesanan_berjalan()
-    paket = store.baca("paket")
-    durasi = dict(zip(paket["id_paket"], pd.to_numeric(paket["durasi_menit"], errors="coerce").fillna(90).astype(int)))
-    nama_paket = dict(zip(paket["id_paket"], paket["nama_paket"]))
-    with st.container(key="card_berjalan"):
-        tema.judul_kartu("Pesanan Sedang Berjalan", "Belum dibayar, jadi belum masuk CSV laporan. Hanya untuk dilihat.")
-        if pend.empty:
-            st.info("Tidak ada pesanan yang sedang berjalan.")
-            return
-        now = store.sekarang()
-        baris = []
-        for _, r in pend.iterrows():
-            sisa = store.sisa_detik(r, durasi.get(r["id_paket"], 90), now)
-            baris.append({
-                "ID": r["id_pesanan"], "Nama": r["nama_pemesan"],
-                "Tipe": "Reservasi" if r["tipe_kedatangan"] == "Booking" else r["tipe_kedatangan"],
-                "Orang": r["jumlah_orang"], "Paket": nama_paket.get(r["id_paket"], r["id_paket"]), "Meja": r["id_meja"],
-                "Mulai": r["mulai_ts"][11:16], "Status": r["status"],
-                "Sisa waktu": ("OVERTIME " if sisa < 0 else "") + f"{abs(sisa) // 60} menit" if r["status"] == "Makan" else "—",
-                "Petugas": r["petugas"],
-            })
-        _tabel(pd.DataFrame(baris), 38 + 35 * min(len(baris), 8))
-
-
 def _tab_baru():
-    _kartu_berjalan()
     log = store.baca(store.LOG_NAMA)
     if log.empty:
-        st.info("Belum ada data yang masuk ke CSV lewat aplikasi. Data muncul di sini setelah pegawai menyelesaikan pembayaran.")
+        st.info("Belum ada data yang masuk lewat aplikasi. Data yang diinput pegawai akan muncul di sini.")
         return
 
     aktif = log[log["status"] == "Aktif"]
@@ -106,60 +76,21 @@ def _tab_baru():
 
 
 # ===========================================================================
-# TAB 2 — UNDUH CSV (semua tanggal / satu tanggal / rentang) + PRATINJAU + DIAGNOSTIK
+# TAB 2 — UNDUH CSV + PRATINJAU + DIAGNOSTIK
 # ===========================================================================
-def _pilih_tanggal():
-    """
-    Filter tanggal unduhan. Mengembalikan (mulai, akhir) atau (None, None) = semua tanggal.
-    Satu tanggal → mulai = akhir. UBAH: pilihan mode & bawaan tanggal ada di bawah.
-    """
-    awal_min, akhir_max = store.batas_tanggal()   # bisa dipilih sampai hari ini, walau tanggalnya belum ada datanya
-    data_awal, data_akhir = store.rentang_data()
-    mode = st.radio("Cakupan tanggal", ["Semua tanggal", "Satu tanggal", "Rentang tanggal"], horizontal=True, key="unduh_mode")
-    if mode == "Satu tanggal":
-        d = st.date_input("Tanggal", value=data_akhir, min_value=awal_min, max_value=akhir_max,
-                          format="DD/MM/YYYY", key="unduh_tgl")
-        if isinstance(d, (tuple, list)):
-            d = d[0] if d else data_akhir
-        return d, d
-    if mode == "Rentang tanggal":
-        r = st.date_input("Dari tanggal – sampai tanggal", value=(data_awal, data_akhir), min_value=awal_min,
-                          max_value=akhir_max, format="DD/MM/YYYY", key="unduh_rentang",
-                          help="Klik tanggal awal lalu tanggal akhir. Jika baru satu tanggal yang dipilih, dipakai sebagai satu tanggal.")
-        if isinstance(r, (tuple, list)):
-            if len(r) == 2:
-                return r[0], r[1]
-            if len(r) == 1:
-                st.caption("Baru satu tanggal dipilih — sementara dipakai sebagai satu tanggal. Klik tanggal akhir untuk rentang.")
-                return r[0], r[0]
-            return None, None
-        return r, r
-    return None, None
-
-
-def _label_rentang(mulai, akhir) -> str:
-    if mulai is None:
-        return ""
-    return f"_{mulai.isoformat()}" if mulai == akhir else f"_{mulai.isoformat()}_sd_{akhir.isoformat()}"
-
-
 def _tab_unduh():
     files = store.daftar_file()
     with st.container(key="card_unduh"):
         tema.judul_kartu(
             "Unduh CSV",
-            "Pilih semua tanggal, satu tanggal, atau rentang tanggal. File master (meja, menu, paket, topping, minuman, harga) "
-            "tidak punya tanggal sehingga selalu lengkap. Simpan salinannya berkala — penyimpanan server bersifat sementara.",
+            "File yang diunduh adalah kondisi terbaru (data awal + input aplikasi). "
+            "Simpan salinannya secara berkala — penyimpanan server bersifat sementara.",
         )
         if not files:
             st.info("Belum ada file CSV.")
             return
-        mulai, akhir = _pilih_tanggal()
-        sufiks = _label_rentang(mulai, akhir)
-        if mulai is not None:
-            st.caption(f"Yang diunduh: data tanggal {mulai:%d/%m/%Y}" + ("" if mulai == akhir else f" sampai {akhir:%d/%m/%Y}") + ".")
 
-        st.download_button("⬇️ Unduh semua (ZIP)", data=store.zip_semua(mulai, akhir), file_name=f"ayce_data{sufiks}.zip",
+        st.download_button("⬇️ Unduh semua (ZIP)", data=store.zip_semua(), file_name="ayce_data.zip",
                            mime="application/zip", type="primary", key="dl_zip")
         st.write("")
         h1, h2, h3, h4 = st.columns([3, 1, 1, 2])
@@ -168,19 +99,17 @@ def _tab_unduh():
         h3.markdown("**Ukuran**")
         for nama in files:
             c1, c2, c3, c4 = st.columns([3, 1, 1, 2])
-            data = store.bytes_csv(nama, mulai, akhir)
-            n_baris = len(store.baca_rentang(nama, mulai, akhir))
+            data = store.bytes_csv(nama)
             c1.markdown(f"`{nama}.csv`")
-            c2.write(store.angka(n_baris))
+            c2.write(store.angka(len(store.baca(nama))))
             c3.write(f"{len(data) / 1024:,.0f} KB")
-            c4.download_button("Unduh", data=data, file_name=f"{nama}{sufiks if nama in store.TABEL_BERTANGGAL else ''}.csv",
-                               mime="text/csv", key=f"dl_{nama}", disabled=(n_baris == 0))
+            c4.download_button("Unduh", data=data, file_name=f"{nama}.csv", mime="text/csv", key=f"dl_{nama}")
 
     with st.container(key="card_pratinjau"):
-        tema.judul_kartu("Pratinjau Isi File", "Mengikuti filter tanggal di atas. Menampilkan 200 baris terakhir.")  # UBAH: angka 200 juga ada di .tail(200)
+        tema.judul_kartu("Pratinjau Isi File", "Menampilkan 200 baris terakhir.")  # UBAH: angka 200 juga ada di .tail(200)
         pilih = st.selectbox("File", files, key="pratinjau_file")
-        df = store.baca_rentang(pilih, mulai, akhir)
-        st.caption(f"{store.angka(len(df))} baris")
+        df = store.baca(pilih)
+        st.caption(f"{store.angka(len(df))} baris total")
         _tabel(df.tail(200).iloc[::-1], 340)
 
     with st.expander("🔧 Diagnostik lokasi data (untuk melacak masalah data hilang)"):
@@ -188,7 +117,7 @@ def _tab_unduh():
             "Menunjukkan dari file mana tiap tabel dibaca. Dashboard, input, dan unduhan semuanya memakai "
             "lokasi yang sama. Jika jumlah baris tidak sesuai harapan, kirim tabel ini ke pembuat aplikasi."
         )
-        _tabel(pd.DataFrame(store.info_sumber()), 460)
+        _tabel(pd.DataFrame(store.info_sumber()), 420)
         st.caption(f"Folder data aktif: `{store.DATA_DIR}`")
 
 
