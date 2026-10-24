@@ -3,8 +3,8 @@ dashboard.py — HALAMAN DASHBOARD (KPI + grafik Plotly).
 
 ╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
 ║ Mau ubah ...                       → cari bagian ...          ║
-║ • Tanggal paling awal yang bisa    → TANGGAL_PALING_AWAL      ║
-║   dipilih di filter                                           ║
+║ • Tanggal paling awal yang bisa    → store.py:                ║
+║   dipilih di filter                  TANGGAL_PALING_AWAL      ║
 ║ • Batas jam shift Pagi/Malam       → BATAS_SHIFT_JAM          ║
 ║ • Filter di sidebar                → blok "FILTER SIDEBAR"    ║
 ║ • Rumus 3 kartu KPI                → blok "KPI"               ║
@@ -18,7 +18,7 @@ Data dibaca lewat store.baca() — pintu yang SAMA dengan yang dipakai saat inpu
 jadi dashboard selalu menampilkan data lama + data baru.
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -28,9 +28,9 @@ import store
 import tema
 from tema import INDIGO, ORANYE, ORANYE_MUDA, ORANYE_PUDAR, TEKS
 
-# UBAH: tanggal paling awal yang boleh dipilih di filter (walau belum ada data di tanggal itu).
-#       Tanggal paling AKHIR otomatis = hari ini (atau tanggal data terakhir bila lebih baru).
-TANGGAL_PALING_AWAL = date(2026, 1, 1)
+# Tanggal paling awal yang boleh dipilih di filter = store.TANGGAL_PALING_AWAL (satu tempat untuk dashboard & unduhan).
+# UBAH: edit nilainya di store.py. Tanggal paling AKHIR otomatis = hari ini (atau tanggal data terakhir bila lebih baru).
+TANGGAL_PALING_AWAL = store.TANGGAL_PALING_AWAL
 
 BATAS_SHIFT_JAM = 15  # UBAH: Pagi = mulai makan sebelum jam ini; Malam = jam ini ke atas
 BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
