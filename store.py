@@ -11,6 +11,14 @@ ALUR PESANAN (inti aplikasi):
   3) bayar_pesanan()          → hitung overtime + denda food waste → BARU masuk ke CSV laporan,
                                  lalu pesanan dihapus dari pesanan_berjalan.csv.
 
+RESERVASI ONLINE (akun pelanggan):
+  buat_reservasi_online()     → pelanggan memesan (nama, orang, usia, tanggal/jam, paket, meja) → data reservasi_online.csv
+                                 (status Aktif, meja ditahan). BELUM masuk CSV laporan.
+  batalkan_reservasi_online() → pelanggan membatalkan SEBELUM jam reservasi → reservasi.csv status Cancelled.
+  konfirmasi_kedatangan()     → pegawai mengonfirmasi pelanggan sudah datang → masuk alur pesanan berjalan di atas
+                                 (timer → selesai makan → bayar → CSV laporan).
+  tandai_noshow()             → pegawai menandai pelanggan tidak datang → reservasi.csv status No-show.
+
 ╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
 ║ Mau ubah ...                              → cari bagian ...   ║
 ║ • Tarif overtime, toleransi, blok waktu   → "ATURAN BISNIS"   ║
@@ -22,6 +30,8 @@ ALUR PESANAN (inti aplikasi):
 ║ • Kolom tiap file CSV                     → SKEMA             ║
 ║ • Cara memilih meja otomatis              → pilih_meja_otomatis║
 ║ • Tanggal paling awal di filter           → TANGGAL_PALING_AWAL║
+║ • Aturan reservasi online (jam, lead  → RESERVASI_*, JAM_BUKA,║
+║   time, pengingat, pilihan meja)       PENGINGAT_MENIT, MEJA_LEBIH_MAKS║
 ║ • Folder penyimpanan data                 → _tentukan_data_dir║
 ╚═══════════════════════════════════════════════════════════════╝
 Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
@@ -40,7 +50,7 @@ import sqlite3
 import tempfile
 import threading
 import zipfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -88,6 +98,12 @@ PB_KOLOM = [  # file kerja: pesanan yang sedang makan / menunggu bayar (dihapus 
     "id_pesanan", "petugas", "tanggal", "mulai_ts", "nama_pemesan", "tipe_kedatangan", "jumlah_orang",
     "id_paket", "id_harga", "id_meja", "jml_child", "jml_senior", "jml_toddler", "subtotal_paket",
     "status", "selesai_ts",
+    "id_online", "tgl_reservasi", "jam_reservasi",  # terisi bila pesanan berasal dari reservasi online
+]
+ROL_KOLOM = [  # reservasi online dari akun pelanggan (status: Aktif / Dibatalkan / Datang / Selesai / No-show)
+    "id_online", "akun", "nama_pemesan", "jumlah_orang", "jml_child", "jml_senior", "jml_toddler",
+    "tanggal", "jam", "id_paket", "id_harga", "id_meja", "subtotal_paket", "dibuat_ts",
+    "status", "id_pesanan", "id_reservasi", "diubah_ts",
 ]
 SKEMA = {
     "paket": ["id_paket", "nama_paket", "durasi_menit"],
@@ -104,6 +120,7 @@ SKEMA = {
     ],
     "pelanggan": ["id_customer", "id_transaksi", "kategori", "jumlah", "persen_harga", "harga_satuan", "subtotal"],
     "food_waste": ["id_waste", "id_transaksi", "berat_sisa_gram", "tarif_denda", "ukuran_blok_gram", "jumlah_blok", "total_denda"],
+    "reservasi_online": ROL_KOLOM,
     "pesanan_berjalan": PB_KOLOM,
 }
 # Nilai isian untuk kolom yang hilang pada file lama (kolom lain yang hilang diisi teks kosong)
@@ -113,10 +130,10 @@ LOG_NAMA = "log_input"
 LOG_KOLOM = ["id_aksi", "waktu_input", "petugas", "tabel", "id_record", "ringkasan", "status"]
 
 # Urutan file pada halaman Bos (tab Unduh). pesanan_berjalan sengaja TIDAK ikut (file kerja sementara).
-URUTAN_FILE = ["transaksi", "pelanggan", "food_waste", "reservasi", "topping", "minuman",
+URUTAN_FILE = ["transaksi", "pelanggan", "food_waste", "reservasi", "reservasi_online", "topping", "minuman",
                "meja", "menu", "paket", "harga_paket"]
 # File yang punya kolom tanggal → bisa difilter per tanggal saat diunduh. Sisanya (master) selalu lengkap.
-TABEL_BERTANGGAL = ["transaksi", "pelanggan", "food_waste", "reservasi", LOG_NAMA]
+TABEL_BERTANGGAL = ["transaksi", "pelanggan", "food_waste", "reservasi", "reservasi_online", LOG_NAMA]
 
 # UBAH: topping bawaan — dipakai HANYA jika topping.csv belum ada.
 #   Semua topping SUDAH TERMASUK harga paket (tanpa biaya tambahan).
@@ -169,8 +186,16 @@ USIA = {"Child": "6–8 tahun", "Toddler": "0–5 tahun"}
 BATAS_DINNER_MENIT = 17 * 60  # UBAH: mulai >= 17:00 dihitung Dinner (jam dalam menit sejak 00:00)
 JEDA_BERSIH = 10              # UBAH: jeda bersih-bersih meja setelah dipakai (menit)
 
+# ----- Reservasi online (akun pelanggan) -----
+JAM_BUKA = 11 * 60            # UBAH: jam buka (menit sejak 00:00) — reservasi tidak bisa sebelum jam ini
+JAM_TUTUP = 22 * 60           # UBAH: jam tutup (dipakai untuk peringatan di form pegawai)
+LAST_ORDER = 20 * 60 + 30     # UBAH: jam kedatangan terakhir yang boleh direservasi
+RESERVASI_MIN_MENIT = 30      # UBAH: reservasi minimal berapa menit dari sekarang
+RESERVASI_MAKS_HARI = 30      # UBAH: reservasi maksimal berapa hari ke depan
+PENGINGAT_MENIT = 30          # UBAH: pengingat muncul berapa menit sebelum jam reservasi
+MEJA_LEBIH_MAKS = 2           # UBAH: meja yang ditawarkan ke pelanggan maksimal (jumlah orang + 2) kursi, minimal meja 4
+
 TIPE = ["Walk-in", "Booking"]               # nilai yang disimpan di CSV
-TIPE_LABEL = {"Walk-in": "Walk-in", "Reservasi": "Booking"}  # tampilan form → nilai CSV
 STATUS = ["Completed", "Cancelled", "No-show"]
 METODE = ["Cash", "QRIS", "Debit", "Kartu Kredit"]  # UBAH: pilihan metode pembayaran (yang pertama = default)
 
@@ -421,6 +446,27 @@ def rincian_harga(harga: int, kom: dict) -> tuple[list[dict], int]:
     return rincian, subtotal
 
 
+def label_kategori(kat: str) -> str:
+    """
+    UBAH: nama kategori pelanggan beserta keterangan usia & diskon (usia di USIA, diskon di PERSEN).
+    Contoh: 'Anak-anak 6–8 tahun (70%)', 'Balita 0–5 tahun (gratis)'.
+    """
+    nama = {"Adult": "Dewasa", "Child": "Anak-anak", "Senior": "Lansia", "Toddler": "Balita"}[kat]
+    usia = USIA.get(kat, "")
+    p = PERSEN[kat]
+    ket = "" if p == 100 else " (gratis)" if p == 0 else f" ({p}%)"
+    return f"{nama} {usia}{ket}".replace("  ", " ").strip()
+
+
+def komposisi_teks(r) -> str:
+    """Komposisi usia dari satu baris reservasi_online/pesanan_berjalan: 'Dewasa 2 · Anak-anak 6–8 tahun 1 · Balita 0–5 tahun 1'."""
+    kom = {"Adult": int(r["jumlah_orang"]) - int(r["jml_child"]) - int(r["jml_senior"]) - int(r["jml_toddler"]),
+           "Child": int(r["jml_child"]), "Senior": int(r["jml_senior"]), "Toddler": int(r["jml_toddler"])}
+    nama = {"Adult": "Dewasa", "Child": f"Anak-anak {USIA.get('Child', '')}".strip(),
+            "Senior": "Lansia", "Toddler": f"Balita {USIA.get('Toddler', '')}".strip()}
+    return " · ".join(f"{nama[k]} {n}" for k, n in kom.items() if n)
+
+
 def hitung_pesanan(tanggal: date, mulai: int, id_paket: str, kom: dict,
                    paket_df: pd.DataFrame, harga_df: pd.DataFrame) -> dict:
     """
@@ -487,11 +533,13 @@ def fasilitas_paket(id_paket: str, paket_df: pd.DataFrame, topping_df: pd.DataFr
 # ===========================================================================
 # MEJA (otomatis & pengecekan bentrok — memperhitungkan pesanan yang sedang berjalan)
 # ===========================================================================
-def _meja_terpakai(tanggal: date) -> dict[str, list[tuple[int, int, str]]]:
+def _meja_terpakai(tanggal: date, abaikan_online: str | None = None) -> dict[str, list[tuple[int, int, str]]]:
     """
     {id_meja: [(mulai_menit, selesai_menit + JEDA_BERSIH, kode), ...]} pada `tanggal`.
-    Sumber: transaksi yang sudah dibayar + pesanan_berjalan (yang masih makan dianggap memakai meja
-    sampai batas paket, atau sampai sekarang bila sudah lewat batas).
+    Sumber: (1) transaksi yang sudah dibayar, (2) pesanan_berjalan (yang masih makan dianggap memakai meja
+    sampai batas paket, atau sampai sekarang bila sudah lewat batas), (3) reservasi online berstatus Aktif
+    (meja ditahan dari jam reservasi selama durasi paket).
+    `abaikan_online` = id reservasi online yang tidak dihitung (dipakai saat pegawai mengonfirmasi kedatangannya).
     """
     iso = tanggal.isoformat()
     terpakai: dict[str, list[tuple[int, int, str]]] = {}
@@ -516,12 +564,34 @@ def _meja_terpakai(tanggal: date) -> dict[str, list[tuple[int, int, str]]]:
             if now.date() == tanggal:
                 akhir = max(akhir, now.hour * 60 + now.minute)
         terpakai.setdefault(r["id_meja"], []).append((mulai, akhir + JEDA_BERSIH, r["id_pesanan"]))
+
+    for _, r in baca("reservasi_online").iterrows():  # reservasi online yang masih Aktif menahan mejanya
+        if r["status"] != "Aktif" or r["tanggal"] != iso or r["id_online"] == abaikan_online:
+            continue
+        s = ke_menit(r["jam"])
+        terpakai.setdefault(r["id_meja"], []).append((s, s + int(durasi.get(r["id_paket"], 90)) + JEDA_BERSIH, r["id_online"]))
     return terpakai
 
 
-def bentrok_meja(tanggal: date, mulai: int, selesai: int, id_meja: str) -> list[str]:
-    """Daftar kode (TRX…/PB…) yang bentrok dengan pemakaian `id_meja` pada [mulai, selesai]. Kosong = aman."""
-    return [k for s, e, k in _meja_terpakai(tanggal).get(id_meja, []) if mulai < e and selesai + JEDA_BERSIH > s]
+def bentrok_meja(tanggal: date, mulai: int, selesai: int, id_meja: str, abaikan_online: str | None = None) -> list[str]:
+    """Daftar kode (TRX…/PB…/RO…) yang bentrok dengan pemakaian `id_meja` pada [mulai, selesai]. Kosong = aman."""
+    return [k for s, e, k in _meja_terpakai(tanggal, abaikan_online).get(id_meja, []) if mulai < e and selesai + JEDA_BERSIH > s]
+
+
+def meja_tersedia(tanggal: date, mulai: int, selesai: int, pax: int, abaikan_online: str | None = None) -> pd.DataFrame:
+    """
+    Meja KOSONG pada [mulai, selesai] yang muat `pax` orang, urut dari yang terkecil (untuk pilihan pelanggan).
+    Yang ditawarkan dulu: kapasitas sampai max(4, pax + MEJA_LEBIH_MAKS); bila tidak ada, semua meja kosong yang muat.
+    """
+    terpakai = _meja_terpakai(tanggal, abaikan_online)
+    m = meja_cocok(pax, baca("meja"))
+    bebas = pd.Series(
+        [all(not (mulai < e and selesai + JEDA_BERSIH > s) for s, e, _ in terpakai.get(i, [])) for i in m["id_meja"]],
+        index=m.index, dtype=bool,
+    )
+    m = m[bebas]
+    dekat = m[m["_c"] <= max(4, pax + MEJA_LEBIH_MAKS)]
+    return dekat if not dekat.empty else m
 
 
 def meja_cocok(pax: int, meja_df: pd.DataFrame) -> pd.DataFrame:
@@ -573,7 +643,8 @@ def daftar_pesanan_berjalan() -> pd.DataFrame:
 
 def buat_pesanan_berjalan(petugas, nama, tipe, jumlah, id_paket, tambahan_kom, id_meja=None) -> dict:
     """
-    Mulai pesanan: timer jalan sekarang. Disimpan di pesanan_berjalan.csv (BELUM di CSV laporan).
+    Mulai pesanan WALK-IN: timer jalan sekarang. Disimpan di pesanan_berjalan.csv (BELUM di CSV laporan).
+    (Pelanggan reservasi online masuk lewat konfirmasi_kedatangan().)
     id_meja=None → meja dipilih otomatis. Harga paket dikunci pada saat ini (Lunch/Dinner, Weekday/Weekend).
     """
     nama = _cek_dasar(nama, tipe, jumlah)
@@ -600,6 +671,7 @@ def buat_pesanan_berjalan(petugas, nama, tipe, jumlah, id_paket, tambahan_kom, i
             "nama_pemesan": nama, "tipe_kedatangan": tipe, "jumlah_orang": jumlah, "id_paket": id_paket,
             "id_harga": h["id_harga"], "id_meja": id_meja, "jml_child": kom["Child"], "jml_senior": kom["Senior"],
             "jml_toddler": kom["Toddler"], "subtotal_paket": h["subtotal_paket"], "status": "Makan", "selesai_ts": "",
+            "id_online": "", "tgl_reservasi": "", "jam_reservasi": "",
         }
         baru = pd.concat([pend, pd.DataFrame([{c: str(row[c]) for c in PB_KOLOM}], columns=PB_KOLOM)], ignore_index=True)
         _tulis("pesanan_berjalan", baru)
@@ -686,7 +758,8 @@ def bayar_pesanan(petugas, id_pesanan: str, berat_gram: int, metode: str) -> dic
     """
     PEMBAYARAN: hitung tagihan final → BARU sekarang data masuk ke CSV laporan:
       reservasi.csv (Completed) · transaksi.csv · pelanggan.csv · food_waste.csv
-    lalu pesanan dihapus dari pesanan_berjalan.csv.
+    lalu pesanan dihapus dari pesanan_berjalan.csv. Bila pesanan berasal dari reservasi online,
+    jam & tanggal di reservasi.csv = jam reservasi, dan status reservasi online menjadi 'Selesai'.
     """
     if metode not in METODE:
         raise DataError("Metode pembayaran tidak valid.")
@@ -703,8 +776,10 @@ def bayar_pesanan(petugas, id_pesanan: str, berat_gram: int, metode: str) -> dic
         fid = id_berikut(baca("food_waste"), "id_waste", "FW", 4)[0]
 
         hm = lambda d: f"{d.hour:02d}:{d.minute:02d}"  # noqa: E731
+        dari_online = bool(r["id_online"])
         res_row = {
-            "id_reservasi": rid, "tanggal": tanggal, "jam": hm(t["mulai"]), "id_meja": r["id_meja"],
+            "id_reservasi": rid, "tanggal": r["tgl_reservasi"] if dari_online else tanggal,
+            "jam": r["jam_reservasi"] if dari_online else hm(t["mulai"]), "id_meja": r["id_meja"],
             "nama_pemesan": r["nama_pemesan"], "jumlah_orang": r["jumlah_orang"],
             "tipe_kedatangan": r["tipe_kedatangan"], "status": "Completed",
         }
@@ -724,48 +799,224 @@ def bayar_pesanan(petugas, id_pesanan: str, berat_gram: int, metode: str) -> dic
             "id_waste": fid, "id_transaksi": tid, "berat_sisa_gram": t["berat_gram"], "tarif_denda": TARIF_DENDA,
             "ukuran_blok_gram": BLOK_GRAM, "jumlah_blok": t["blok_waste"], "total_denda": t["denda"],
         }
-        sisa = pend[pend["id_pesanan"] != id_pesanan].reset_index(drop=True)
+        ganti = {"pesanan_berjalan": pend[pend["id_pesanan"] != id_pesanan].reset_index(drop=True)}
+        if dari_online:
+            rol = baca("reservasi_online")
+            m = rol["id_online"] == r["id_online"]
+            rol.loc[m, "status"] = "Selesai"
+            rol.loc[m, "id_reservasi"] = rid
+            rol.loc[m, "diubah_ts"] = _ts(sekarang())
+            ganti["reservasi_online"] = rol
         _commit(petugas, {"reservasi": [res_row], "transaksi": [trx_row], "pelanggan": pel_rows, "food_waste": [fw_row]},
-                ganti={"pesanan_berjalan": sisa})
+                ganti=ganti)
     return {"id_reservasi": rid, "id_transaksi": tid, "total": t["total"], "subtotal_paket": t["subtotal_paket"],
             "biaya_overtime": t["biaya_overtime"], "denda": t["denda"], "menit_overtime": t["menit_overtime"],
             "nama": r["nama_pemesan"]}
 
 
 def batalkan_pesanan_berjalan(id_pesanan: str) -> dict:
-    """Hapus pesanan yang belum dibayar (mis. salah input / tamu batal). Tidak ada yang masuk CSV laporan."""
+    """
+    Hapus pesanan yang belum dibayar (mis. salah input / tamu batal). Tidak ada yang masuk CSV laporan.
+    Bila pesanan berasal dari reservasi online, reservasinya kembali berstatus Aktif (bisa dikonfirmasi ulang).
+    """
     with _LOCK:
         pend = baca("pesanan_berjalan")
         r = _ambil_pesanan(pend, id_pesanan)
-        _tulis("pesanan_berjalan", pend[pend["id_pesanan"] != id_pesanan].reset_index(drop=True))
+        perubahan = {"pesanan_berjalan": pend[pend["id_pesanan"] != id_pesanan].reset_index(drop=True)}
+        if r["id_online"]:
+            rol = baca("reservasi_online")
+            m = rol["id_online"] == r["id_online"]
+            rol.loc[m, "status"] = "Aktif"
+            rol.loc[m, "id_pesanan"] = ""
+            rol.loc[m, "diubah_ts"] = _ts(sekarang())
+            perubahan["reservasi_online"] = rol
+        _tulis_banyak(perubahan)
     return r.to_dict()
 
 
-def simpan_reservasi_saja(petugas, tanggal: date, jam, nama, tipe, jumlah, status, id_meja=None) -> str:
+# ===========================================================================
+# RESERVASI ONLINE (akun pelanggan) → pegawai konfirmasi kedatangan → timer → bayar → CSV
+# ===========================================================================
+def waktu_target(r) -> datetime:
+    """Jam reservasi sebagai datetime (waktu lokal WIB tanpa zona)."""
+    return datetime.fromisoformat(f"{r['tanggal']} {r['jam']}:00")
+
+
+def sisa_menuju(r, now: datetime | None = None) -> int:
+    """Detik menuju jam reservasi (NEGATIF = sudah lewat)."""
+    now = now or sekarang()
+    return int((waktu_target(r) - now.replace(tzinfo=None)).total_seconds())
+
+
+def format_sisa(detik) -> str:
+    """Detik → '2 hari 3 jam 15 menit' / '3 jam 15 menit' / '15 menit' / 'kurang dari 1 menit'. UBAH: kata-kata di sini."""
+    detik = int(detik)
+    if detik < 60:
+        return "kurang dari 1 menit"
+    hari, sisa = divmod(detik, 86400)
+    jam, sisa = divmod(sisa, 3600)
+    menit = sisa // 60
+    if hari:
+        return f"{hari} hari {jam} jam {menit} menit"
+    if jam:
+        return f"{jam} jam {menit} menit"
+    return f"{menit} menit"
+
+
+def _ambil_online(rol: pd.DataFrame, id_online: str) -> pd.Series:
+    r = rol[rol["id_online"] == id_online]
+    if r.empty:
+        raise DataError(f"Reservasi {id_online} tidak ditemukan.")
+    return r.iloc[0]
+
+
+def daftar_reservasi_online(akun: str | None = None) -> pd.DataFrame:
+    """Semua reservasi online (atau milik satu akun), urut tanggal & jam reservasi."""
+    df = baca("reservasi_online")
+    if akun is not None:
+        df = df[df["akun"] == akun]
+    return df.sort_values(["tanggal", "jam"]).reset_index(drop=True) if not df.empty else df
+
+
+def buat_reservasi_online(akun, nama, jumlah, tambahan_kom, tanggal: date, jam, id_paket, id_meja) -> dict:
     """
-    Catat reservasi yang TIDAK jadi makan (Cancelled / No-show) → langsung ke reservasi.csv (tanpa timer/pembayaran).
-    Hanya untuk tipe Booking (Walk-in selalu Completed).
+    Pelanggan memesan reservasi. Harga paket DIKUNCI sesuai tanggal & jam reservasi, dan meja ditahan.
+    Disimpan di reservasi_online.csv (status Aktif) — BELUM masuk CSV laporan.
     """
-    nama = _cek_dasar(nama, tipe, jumlah)
+    nama = (nama or "").strip()
+    if not nama:
+        raise DataError("Nama pelanggan wajib diisi.")
+    if not akun:
+        raise DataError("Akun tidak dikenali.")
     jumlah = int(jumlah)
-    if status not in STATUS or status == "Completed":
-        raise DataError("Status Completed dicatat lewat alur pesanan (mulai → selesai makan → bayar).")
-    if tipe == "Walk-in":
-        raise DataError("Walk-in hanya boleh berstatus Completed. Tamu yang batal / tidak datang dicatat sebagai Reservasi.")
+    if jumlah < 1:
+        raise DataError("Jumlah orang minimal 1.")
+    now = sekarang()
+    mulai = ke_menit(jam)
+    if not (JAM_BUKA <= mulai <= LAST_ORDER):
+        raise DataError(f"Jam kedatangan harus antara {dari_menit(JAM_BUKA)} dan {dari_menit(LAST_ORDER)}.")
+    target = datetime.combine(tanggal, time(mulai // 60, mulai % 60))
+    if target < now.replace(tzinfo=None) + timedelta(minutes=RESERVASI_MIN_MENIT):
+        raise DataError(f"Reservasi minimal {RESERVASI_MIN_MENIT} menit dari sekarang. Pilih jam yang lebih lambat.")
+    if tanggal > now.date() + timedelta(days=RESERVASI_MAKS_HARI):
+        raise DataError(f"Reservasi maksimal {RESERVASI_MAKS_HARI} hari ke depan.")
     with _LOCK:
-        meja = baca("meja")
-        if id_meja is None:
-            cocok = meja_cocok(jumlah, meja)
-            if cocok.empty:
-                raise DataError(f"Tidak ada meja berkapasitas {jumlah} orang.")
-            id_meja = cocok.iloc[0]["id_meja"]
-        elif id_meja not in set(meja["id_meja"]):
-            raise DataError(f"Meja {id_meja} tidak ada di meja.csv.")
+        paket, harga, meja = baca("paket"), baca("harga_paket"), baca("meja")
+        h = hitung_pesanan(tanggal, mulai, id_paket, komposisi(jumlah, tambahan_kom), paket, harga)
+        mj = meja[meja["id_meja"] == id_meja]
+        if mj.empty:
+            raise DataError("Silakan pilih meja.")
+        if int(mj.iloc[0]["kapasitas"]) < jumlah:
+            raise DataError(f"Meja {id_meja} hanya berkapasitas {mj.iloc[0]['kapasitas']} orang.")
+        if bentrok_meja(tanggal, mulai, h["selesai"], id_meja):
+            raise DataError(f"Meja {id_meja} sudah dipesan pada jam tersebut. Silakan pilih meja atau jam lain.")
+        rol = baca("reservasi_online")
+        oid = id_berikut(rol, "id_online", "RO", 4)[0]  # UBAH: pola ID reservasi online
+        kom = h["komposisi"]
+        row = {
+            "id_online": oid, "akun": akun, "nama_pemesan": nama, "jumlah_orang": jumlah,
+            "jml_child": kom["Child"], "jml_senior": kom["Senior"], "jml_toddler": kom["Toddler"],
+            "tanggal": tanggal.isoformat(), "jam": dari_menit(mulai), "id_paket": id_paket, "id_harga": h["id_harga"],
+            "id_meja": id_meja, "subtotal_paket": h["subtotal_paket"], "dibuat_ts": _ts(now),
+            "status": "Aktif", "id_pesanan": "", "id_reservasi": "", "diubah_ts": "",
+        }
+        baru = pd.concat([rol, pd.DataFrame([{c: str(row[c]) for c in ROL_KOLOM}], columns=ROL_KOLOM)], ignore_index=True)
+        _tulis("reservasi_online", baru)
+    return {"id_online": oid, "nama_paket": h["nama_paket"], "total": h["subtotal_paket"], "id_meja": id_meja,
+            "tanggal": tanggal.isoformat(), "jam": dari_menit(mulai)}
+
+
+def batalkan_reservasi_online(akun: str, id_online: str) -> dict:
+    """
+    Pelanggan membatalkan reservasinya — HANYA sebelum jam reservasi tiba.
+    Dicatat ke reservasi.csv sebagai Booking berstatus Cancelled; mejanya dilepas.
+    """
+    with _LOCK:
+        rol = baca("reservasi_online")
+        r = _ambil_online(rol, id_online)
+        if r["akun"] != akun:
+            raise DataError("Reservasi ini bukan milik akun Anda.")
+        if r["status"] != "Aktif":
+            raise DataError(f"Reservasi ini berstatus {r['status']} sehingga tidak bisa dibatalkan.")
+        if sisa_menuju(r) <= 0:
+            raise DataError("Jam reservasi sudah tiba, sehingga tidak bisa dibatalkan lagi. Silakan hubungi pegawai.")
         rid = id_berikut(baca("reservasi"), "id_reservasi", "RS", 4)[0]
-        row = {"id_reservasi": rid, "tanggal": tanggal.isoformat(), "jam": dari_menit(ke_menit(jam)), "id_meja": id_meja,
-               "nama_pemesan": nama, "jumlah_orang": jumlah, "tipe_kedatangan": tipe, "status": status}
-        _commit(petugas, {"reservasi": [row]})
-    return rid
+        res_row = {
+            "id_reservasi": rid, "tanggal": r["tanggal"], "jam": r["jam"], "id_meja": r["id_meja"],
+            "nama_pemesan": r["nama_pemesan"], "jumlah_orang": r["jumlah_orang"],
+            "tipe_kedatangan": "Booking", "status": "Cancelled",
+        }
+        m = rol["id_online"] == id_online
+        rol.loc[m, "status"] = "Dibatalkan"
+        rol.loc[m, "id_reservasi"] = rid
+        rol.loc[m, "diubah_ts"] = _ts(sekarang())
+        _commit(akun, {"reservasi": [res_row]}, ganti={"reservasi_online": rol})
+    return {"id_online": id_online, "id_reservasi": rid}
+
+
+def konfirmasi_kedatangan(petugas, id_online: str, id_meja: str | None = None) -> dict:
+    """
+    Pegawai mengonfirmasi pelanggan reservasi online SUDAH DATANG → timer mulai sekarang (alur pesanan berjalan).
+    Paket, komposisi usia, dan harga sesuai reservasi (terkunci). id_meja=None → meja sesuai reservasi.
+    """
+    with _LOCK:
+        rol = baca("reservasi_online")
+        r = _ambil_online(rol, id_online)
+        if r["status"] != "Aktif":
+            raise DataError(f"Reservasi {id_online} berstatus {r['status']}, sehingga tidak bisa dikonfirmasi.")
+        paket, harga, meja = baca("paket"), baca("harga_paket"), baca("meja")
+        p = paket[paket["id_paket"] == r["id_paket"]]
+        h = harga[harga["id_harga"] == r["id_harga"]]
+        if p.empty or h.empty:
+            raise DataError("Paket / harga pada reservasi ini sudah tidak ada di paket.csv / harga_paket.csv.")
+        id_meja_final = id_meja or r["id_meja"]
+        if id_meja_final not in set(meja["id_meja"]):
+            raise DataError(f"Meja {id_meja_final} tidak ada di meja.csv.")
+        now = sekarang()
+        pend = baca("pesanan_berjalan")
+        pid = id_berikut(pend, "id_pesanan", "PB", 4)[0]
+        _, subtotal = rincian_harga(int(h.iloc[0]["harga"]), {
+            "Adult": int(r["jumlah_orang"]) - int(r["jml_child"]) - int(r["jml_senior"]) - int(r["jml_toddler"]),
+            "Child": int(r["jml_child"]), "Senior": int(r["jml_senior"]), "Toddler": int(r["jml_toddler"])})
+        row = {
+            "id_pesanan": pid, "petugas": petugas, "tanggal": now.date().isoformat(), "mulai_ts": _ts(now),
+            "nama_pemesan": r["nama_pemesan"], "tipe_kedatangan": "Booking", "jumlah_orang": r["jumlah_orang"],
+            "id_paket": r["id_paket"], "id_harga": r["id_harga"], "id_meja": id_meja_final,
+            "jml_child": r["jml_child"], "jml_senior": r["jml_senior"], "jml_toddler": r["jml_toddler"],
+            "subtotal_paket": subtotal, "status": "Makan", "selesai_ts": "",
+            "id_online": id_online, "tgl_reservasi": r["tanggal"], "jam_reservasi": r["jam"],
+        }
+        baru_pend = pd.concat([pend, pd.DataFrame([{c: str(row[c]) for c in PB_KOLOM}], columns=PB_KOLOM)], ignore_index=True)
+        m = rol["id_online"] == id_online
+        rol.loc[m, "status"] = "Datang"
+        rol.loc[m, "id_pesanan"] = pid
+        rol.loc[m, "diubah_ts"] = _ts(now)
+        _tulis_banyak({"pesanan_berjalan": baru_pend, "reservasi_online": rol})
+    return {"id_pesanan": pid, "id_meja": id_meja_final, "nama_paket": p.iloc[0]["nama_paket"],
+            "durasi_paket": int(p.iloc[0]["durasi_menit"]), "nama": r["nama_pemesan"]}
+
+
+def tandai_noshow(petugas, id_online: str) -> dict:
+    """Pegawai menandai pelanggan TIDAK DATANG (hanya setelah jam reservasi lewat) → reservasi.csv status No-show."""
+    with _LOCK:
+        rol = baca("reservasi_online")
+        r = _ambil_online(rol, id_online)
+        if r["status"] != "Aktif":
+            raise DataError(f"Reservasi {id_online} berstatus {r['status']}.")
+        if sisa_menuju(r) > 0:
+            raise DataError("Jam reservasi belum tiba, belum bisa ditandai No-show.")
+        rid = id_berikut(baca("reservasi"), "id_reservasi", "RS", 4)[0]
+        res_row = {
+            "id_reservasi": rid, "tanggal": r["tanggal"], "jam": r["jam"], "id_meja": r["id_meja"],
+            "nama_pemesan": r["nama_pemesan"], "jumlah_orang": r["jumlah_orang"],
+            "tipe_kedatangan": "Booking", "status": "No-show",
+        }
+        m = rol["id_online"] == id_online
+        rol.loc[m, "status"] = "No-show"
+        rol.loc[m, "id_reservasi"] = rid
+        rol.loc[m, "diubah_ts"] = _ts(sekarang())
+        _commit(petugas, {"reservasi": [res_row]}, ganti={"reservasi_online": rol})
+    return {"id_online": id_online, "id_reservasi": rid, "nama": r["nama_pemesan"]}
 
 
 # ===========================================================================
@@ -790,6 +1041,8 @@ def rekap_tanggal(tgl: date) -> dict:
     trx = trx[trx["tanggal"] == iso]
     pb = baca("pesanan_berjalan")
     pb = pb[pb["tanggal"] == iso]
+    ol = baca("reservasi_online")
+    ol = ol[(ol["tanggal"] == iso) & (ol["status"] == "Aktif")]
     return {
         "booking_total": hitung("Booking"),
         "booking_datang": hitung("Booking", "Completed"),
@@ -800,6 +1053,7 @@ def rekap_tanggal(tgl: date) -> dict:
         "pelanggan": int(pd.to_numeric(trx["jumlah_orang"], errors="coerce").fillna(0).sum()),
         "pendapatan": int(pd.to_numeric(trx["total_bayar"], errors="coerce").fillna(0).sum()),
         "berjalan": (len(pb), int(pd.to_numeric(pb["jumlah_orang"], errors="coerce").fillna(0).sum())),
+        "online_aktif": (len(ol), int(pd.to_numeric(ol["jumlah_orang"], errors="coerce").fillna(0).sum())),
     }
 
 
@@ -817,6 +1071,7 @@ def _pesanan_dari_pembayaran(petugas: str, ids_trx: list[str]) -> dict | None:
     """
     Susun ulang baris pesanan_berjalan dari data transaksi yang akan dihapus (dipakai saat pembayaran dibatalkan,
     supaya pesanan kembali ke daftar 'Sedang Makan' dengan status Menunggu Bayar dan bisa dibayar ulang).
+    Bila pesanan berasal dari reservasi online, tautannya (id_online) ikut dipulihkan.
     """
     trx = baca("transaksi")
     t = trx[trx["id_transaksi"].isin(ids_trx)]
@@ -827,6 +1082,8 @@ def _pesanan_dari_pembayaran(petugas: str, ids_trx: list[str]) -> dict | None:
     r = res[res["id_reservasi"] == t["id_reservasi"]].iloc[0]
     pel = baca("pelanggan")
     jml = {x["kategori"]: int(x["jumlah"]) for _, x in pel[pel["id_transaksi"] == t["id_transaksi"]].iterrows()}
+    rol = baca("reservasi_online")
+    o = rol[rol["id_reservasi"] == t["id_reservasi"]]
     mulai = _dari_ts(f"{t['tanggal']} {t['waktu_mulai']}:00")
     selesai = _dari_ts(f"{t['tanggal']} {t['waktu_selesai']}:00")
     if selesai < mulai:
@@ -837,13 +1094,17 @@ def _pesanan_dari_pembayaran(petugas: str, ids_trx: list[str]) -> dict | None:
         "id_harga": t["id_harga"], "id_meja": t["id_meja"], "jml_child": jml.get("Child", 0),
         "jml_senior": jml.get("Senior", 0), "jml_toddler": jml.get("Toddler", 0), "subtotal_paket": t["subtotal_paket"],
         "status": "Menunggu Bayar", "selesai_ts": _ts(selesai),
+        "id_online": o.iloc[0]["id_online"] if not o.empty else "",
+        "tgl_reservasi": o.iloc[0]["tanggal"] if not o.empty else "",
+        "jam_reservasi": o.iloc[0]["jam"] if not o.empty else "",
     }
 
 
 def batalkan_aksi_terakhir(petugas: str):
     """
     Hapus data dari aksi terakhir petugas lalu tandai di log sebagai 'Dibatalkan'.
-    Jika aksi itu sebuah PEMBAYARAN, pesanannya dikembalikan ke daftar 'Sedang Makan' (Menunggu Bayar).
+    - Aksi PEMBAYARAN → pesanan dikembalikan ke 'Sedang Makan' (Menunggu Bayar); reservasi online-nya kembali 'Datang'.
+    - Aksi tandai No-show → reservasi online-nya kembali 'Aktif'.
     Mengembalikan (daftar_baris_log, pesanan_dipulihkan: bool) atau None bila tidak ada aksi.
     """
     with _LOCK:
@@ -868,6 +1129,21 @@ def batalkan_aksi_terakhir(petugas: str):
             pulih["id_pesanan"] = id_berikut(pend, "id_pesanan", "PB", 4)[0]
             baru["pesanan_berjalan"] = pd.concat(
                 [pend, pd.DataFrame([{c: str(pulih[c]) for c in PB_KOLOM}], columns=PB_KOLOM)], ignore_index=True)
+
+        rol = baca("reservasi_online")
+        rol_berubah = False
+        if pulih and pulih["id_online"]:
+            m = rol["id_online"] == pulih["id_online"]
+            rol.loc[m, ["status", "id_reservasi", "id_pesanan"]] = ["Datang", "", pulih["id_pesanan"]]
+            rol_berubah = True
+        elif "reservasi" in per_tabel:
+            m = rol["id_reservasi"].isin(per_tabel["reservasi"]) & (rol["status"] == "No-show")
+            if m.any():
+                rol.loc[m, ["status", "id_reservasi"]] = ["Aktif", ""]
+                rol_berubah = True
+        if rol_berubah:
+            baru["reservasi_online"] = rol
+
         log = baca(LOG_NAMA)
         log.loc[log["id_aksi"] == idk, "status"] = "Dibatalkan"
         baru[LOG_NAMA] = log
@@ -926,7 +1202,7 @@ def baca_rentang(nama: str, mulai: date | None = None, akhir: date | None = None
     if mulai is None or akhir is None or nama not in TABEL_BERTANGGAL:
         return df
     m, a = mulai.isoformat(), akhir.isoformat()
-    if nama in ("reservasi", "transaksi"):
+    if nama in ("reservasi", "transaksi", "reservasi_online"):
         return df[(df["tanggal"] >= m) & (df["tanggal"] <= a)]
     if nama in ("pelanggan", "food_waste"):
         t = baca("transaksi")

@@ -2,9 +2,12 @@
 input_data.py — HALAMAN INPUT PESANAN (peran: pegawai).
 
 ALUR (tiga tab):
-  🧾 Pesanan Baru   : nama → Walk-in/Reservasi → jumlah orang → paket (durasi & harga) → fasilitas paket
-                      (topping, minuman, dessert — sudah termasuk harga) → rincian harga → [Mulai Pesanan]
-                      ⇒ timer langsung jalan. Data BELUM masuk CSV laporan.
+  🧾 Pesanan Baru   : pilih tipe kedatangan.
+      • Walk-in → nama → jumlah orang → paket (durasi & harga) → fasilitas paket (topping, minuman, dessert — sudah
+        termasuk harga) → rincian harga → [Mulai Pesanan] ⇒ timer langsung jalan.
+      • Reservasi (sudah datang) → cari nama pelanggan yang reservasi online (tampil jam reservasi & kapan ia memesan)
+        → [Konfirmasi Pesanan & Mulai Timer] ⇒ timer jalan. (Reservasi dibuat pelanggan di akunnya sendiri: pelanggan.py)
+      Data BELUM masuk CSV laporan.
   ⏱️ Sedang Makan   : tiap pesanan tampil dengan timer mundur sesuai batas paket.
                       [Selesai makan] → timer berhenti → isi berat sisa makanan & metode bayar →
                       overtime & denda dihitung otomatis → [Konfirmasi Pembayaran]
@@ -14,8 +17,8 @@ Logika hitung & simpan ada di store.py; file ini hanya tampilan & tombol.
 
 ╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
 ║ Mau ubah ...                       → cari bagian ...          ║
-║ • Jam buka / tutup / last order    → JAM_BUKA, JAM_TUTUP,     ║
-║   (peringatan di form)               LAST_ORDER (di bawah)    ║
+║ • Jam buka / tutup / last order    → store.py: JAM_BUKA,      ║
+║   (peringatan di form)               JAM_TUTUP, LAST_ORDER    ║
 ║ • Daftar topping / minuman         → data/topping.csv,        ║
 ║   per paket                          data/minuman.csv         ║
 ║                                      (kolom paket_minimal)    ║
@@ -33,7 +36,8 @@ Cari kata "UBAH:" untuk menemukan nilai yang biasa Anda ganti.
 
 from __future__ import annotations
 
-from datetime import time
+import zlib
+from datetime import date, datetime
 from html import escape
 
 import pandas as pd
@@ -48,10 +52,12 @@ try:  # komponen untuk timer yang berdetak di browser (JavaScript)
 except Exception:  # pragma: no cover
     components = None
 
-# UBAH: jam operasional (menit sejak 00:00). Hanya untuk PERINGATAN di form, tidak memblokir penyimpanan.
-JAM_BUKA = 11 * 60
-JAM_TUTUP = 22 * 60
-LAST_ORDER = 20 * 60 + 30  # pelanggan Walk-in baru setelah jam ini → muncul peringatan
+# Jam operasional dipakai bersama dengan reservasi online, jadi diatur di store.py (JAM_BUKA, JAM_TUTUP, LAST_ORDER).
+JAM_BUKA, JAM_TUTUP, LAST_ORDER = store.JAM_BUKA, store.JAM_TUTUP, store.LAST_ORDER
+
+TIPE_WALKIN = "Walk-in"
+TIPE_RESERVASI = "Reservasi (sudah datang)"
+SESUAI_RESERVASI = "Sesuai reservasi"
 
 OTOMATIS = "Otomatis (meja kosong yang paling pas)"
 URUTAN_HARGA = ["Lunch Weekday", "Lunch Weekend", "Dinner Weekday", "Dinner Weekend"]
@@ -86,15 +92,8 @@ def _tabel(df: pd.DataFrame, tinggi: int = 260):
 
 
 def _label_kategori(kat: str) -> str:
-    """
-    UBAH: nama kategori pelanggan beserta keterangan usia & diskon (usia diatur di store.USIA, diskon di store.PERSEN).
-    Contoh hasil: 'Anak-anak 6–8 tahun (70%)', 'Balita 0–5 tahun (gratis)'.
-    """
-    nama = {"Adult": "Dewasa", "Child": "Anak-anak", "Senior": "Lansia", "Toddler": "Balita"}[kat]
-    usia = store.USIA.get(kat, "")
-    p = store.PERSEN[kat]
-    ket = "" if p == 100 else " (gratis)" if p == 0 else f" ({p}%)"
-    return f"{nama} {usia}{ket}".replace("  ", " ").strip()
+    """Nama kategori + usia + diskon, mis. 'Anak-anak 6–8 tahun (70%)'. UBAH: lihat store.label_kategori / USIA / PERSEN."""
+    return store.label_kategori(kat)
 
 
 def _tabel_harga_lengkap(paket: pd.DataFrame, harga: pd.DataFrame) -> pd.DataFrame:
@@ -166,7 +165,7 @@ def _tampilkan_timer(sisa: int):
 
 
 # ===========================================================================
-# TAB 1 — PESANAN BARU
+# TAB 1 — PESANAN BARU  (Walk-in langsung, atau Reservasi yang sudah datang)
 # ===========================================================================
 def _form_pesanan(user):
     v = _ver("pesan")
@@ -180,30 +179,30 @@ def _form_pesanan(user):
         return
 
     # -----------------------------------------------------------------------
-    # 1 · DATA PEMESAN  (nama → tipe → jumlah orang)
+    # 1 · TIPE KEDATANGAN
+    # -----------------------------------------------------------------------
+    with st.container(key="card_tipe"):
+        tema.judul_kartu(
+            "1 · Tipe Kedatangan",
+            "<b>Walk-in</b> = pelanggan datang langsung. <b>Reservasi</b> = pelanggan yang sudah reservasi online dan kini sudah tiba.",
+        )
+        tipe_label = st.radio("Tipe kedatangan", [TIPE_WALKIN, TIPE_RESERVASI], horizontal=True,
+                              key=k("tipe"), label_visibility="collapsed")
+    if tipe_label == TIPE_RESERVASI:
+        _form_reservasi_datang(user, k, now, paket, harga, meja)
+        return
+
+    # ======================= WALK-IN =======================
+    # -----------------------------------------------------------------------
+    # 2 · DATA PEMESAN  (nama → jumlah orang)
     # -----------------------------------------------------------------------
     with st.container(key="card_pemesan"):
-        tema.judul_kartu("1 · Data Pemesan", "Isi nama pemesan, tipe kedatangan, dan jumlah orang.")
+        tema.judul_kartu("2 · Data Pemesan", "Isi nama pemesan dan jumlah orang.")
         nama = st.text_input("Nama pemesan", max_chars=60, placeholder="Contoh: Budi Santoso", key=k("nama"))
-        c1, c2 = st.columns(2)
-        tipe_label = c1.radio("Tipe kedatangan", list(store.TIPE_LABEL), horizontal=True, key=k("tipe"))
-        jumlah = int(c2.number_input("Jumlah orang", min_value=1, max_value=40, value=2, step=1, key=k("jml")))  # UBAH: maks 40
-    tipe = store.TIPE_LABEL[tipe_label]  # "Reservasi" di layar → "Booking" di CSV
+        jumlah = int(st.number_input("Jumlah orang", min_value=1, max_value=40, value=2, step=1, key=k("jml")))  # UBAH: maks 40
 
-    # -----------------------------------------------------------------------
     # ⚙ OPSI LANJUTAN (semua punya nilai otomatis; buka hanya bila perlu)
-    # -----------------------------------------------------------------------
-    with st.expander("⚙️ Opsi lanjutan — status, meja, anak-anak / lansia / balita"):
-        if tipe == "Booking":
-            status = st.selectbox(
-                "Status kedatangan", store.STATUS, key=k("status"),
-                help="Completed = tamu datang & makan (timer jalan, dibayar setelah makan). "
-                     "Cancelled / No-show langsung dicatat di reservasi tanpa timer.",
-            )
-        else:
-            status = "Completed"
-            st.caption("Walk-in selalu berstatus Completed.")
-
+    with st.expander("⚙️ Opsi lanjutan — meja, anak-anak / lansia / balita"):
         opsi_meja = store.meja_cocok(jumlah, meja)
         label_meja = {OTOMATIS: OTOMATIS}
         for _, r in opsi_meja.iterrows():
@@ -230,38 +229,16 @@ def _form_pesanan(user):
     # peringatan jam (tidak memblokir)
     if not (JAM_BUKA <= mulai <= JAM_TUTUP):
         st.warning("Jam di luar jam operasional (11:00–22:00).")
-    elif mulai > LAST_ORDER and tipe == "Walk-in":
+    elif mulai > LAST_ORDER:
         st.warning("Lewat batas last order / pelanggan baru terakhir (20:30).")
 
     # -----------------------------------------------------------------------
-    # Status BUKAN Completed → langsung catat reservasi (tanpa timer & pembayaran)
-    # -----------------------------------------------------------------------
-    if status != "Completed":
-        with st.container(key="card_reservasi_saja"):
-            tema.judul_kartu("Catat Reservasi", f"Status <b>{status}</b>: langsung disimpan ke reservasi.csv (tanpa timer & pembayaran).")
-            ca, cb = st.columns(2)
-            tgl = ca.date_input("Tanggal reservasi", value=now.date(), max_value=now.date(), format="DD/MM/YYYY", key=k("tgl_res"))
-            jam = cb.time_input("Jam reservasi", value=time(now.hour, now.minute), step=300, key=k("jam_res"))
-            nid = store.id_berikut(store.baca("reservasi"), "id_reservasi", "RS", 4)[0]
-            st.caption(f"Akan disimpan sebagai **{nid}**")
-            if st.button("💾 Simpan Reservasi", type="primary", key=k("simpan_res")):
-                try:
-                    rid = store.simpan_reservasi_saja(user["username"], tgl, jam, nama, tipe, jumlah, status, id_meja_pilih)
-                except store.DataError as e:
-                    st.error(str(e))
-                else:
-                    _flash("success", f"Tersimpan: **{rid}** · {status} · {nama.strip()} · {jumlah} orang.")
-                    _naik("pesan")
-                    st.rerun()
-        return
-
-    # -----------------------------------------------------------------------
-    # 2 · PILIH PAKET  (batas durasi + harga per orang + fasilitas yang didapat)
+    # 3 · PILIH PAKET  (batas durasi + harga per orang + fasilitas yang didapat)
     # -----------------------------------------------------------------------
     waktu, hari = store.konteks_harga(now.date(), mulai)
     with st.container(key="card_paket"):
         tema.judul_kartu(
-            "2 · Pilih Paket",
+            "3 · Pilih Paket",
             f"Harga per orang dewasa · berlaku <b>{waktu}</b> · <b>{hari}</b> ({now:%d/%m/%Y} {now:%H:%M})",
         )
         label_paket = {}
@@ -300,7 +277,7 @@ def _form_pesanan(user):
             _tabel(_tabel_harga_lengkap(paket, harga), tinggi=38 + 35 * len(paket))
 
     # -----------------------------------------------------------------------
-    # 3 · RINCIAN HARGA + MULAI PESANAN
+    # 4 · RINCIAN HARGA + MULAI PESANAN
     # -----------------------------------------------------------------------
     try:
         h = store.hitung_pesanan(now.date(), mulai, id_paket, kom, paket, harga)
@@ -310,7 +287,7 @@ def _form_pesanan(user):
 
     bisa_mulai = True
     with st.container(key="card_harga"):
-        tema.judul_kartu("3 · Rincian Harga", "Harga paket per kategori pelanggan. Pembayaran dilakukan setelah selesai makan.")
+        tema.judul_kartu("4 · Rincian Harga", "Harga paket per kategori pelanggan. Pembayaran dilakukan setelah selesai makan.")
         baris = [
             {"Item": f"Paket {h['nama_paket']} — {_label_kategori(x['kategori'])}", "Jumlah": x["jumlah"],
              "Harga": store.rp(x["satuan"]), "Subtotal": store.rp(x["subtotal"])}
@@ -344,7 +321,7 @@ def _form_pesanan(user):
         if st.button("▶️ Mulai Pesanan & Timer", type="primary", key=k("simpan"), disabled=not bisa_mulai):
             try:
                 out = store.buat_pesanan_berjalan(
-                    user["username"], nama, tipe, jumlah, id_paket, tambahan, id_meja_pilih,
+                    user["username"], nama, "Walk-in", jumlah, id_paket, tambahan, id_meja_pilih,
                 )
             except store.DataError as e:
                 st.error(str(e))
@@ -355,6 +332,98 @@ def _form_pesanan(user):
                        "Lihat di tab **⏱️ Sedang Makan**; data masuk CSV setelah dibayar.")
                 _naik("pesan")
                 st.rerun()
+
+
+def _form_reservasi_datang(user, k, now, paket, harga, meja):
+    """
+    Pelanggan RESERVASI ONLINE yang sudah tiba: cari nama → lihat info reservasi (jam reservasi, kapan diinput)
+    → konfirmasi pesanan ⇒ timer mulai. Paket, usia, dan harga mengikuti reservasi (terkunci).
+    """
+    ol = store.daftar_reservasi_online()
+    aktif = ol[ol["status"] == "Aktif"] if not ol.empty else ol
+    nama_paket = dict(zip(paket["id_paket"], paket["nama_paket"]))
+    durasi_paket = dict(zip(paket["id_paket"], pd.to_numeric(paket["durasi_menit"], errors="coerce").fillna(90).astype(int)))
+
+    with st.container(key="card_rsv_datang"):
+        tema.judul_kartu(
+            "2 · Cari Reservasi Online",
+            "Ketik nama pelanggan yang sudah reservasi. Timer baru dimulai setelah pesanannya dikonfirmasi.",
+        )
+        c1, c2 = st.columns([3, 2])
+        cari = c1.text_input("Cari nama pemesan", placeholder="ketik sebagian nama", key=k("cari"))
+        semua = c2.checkbox("Tampilkan tanggal lain (bukan hari ini)", key=k("semua_tgl"))
+
+        data = aktif
+        if not semua and not data.empty:
+            data = data[data["tanggal"] == now.date().isoformat()]
+        if cari.strip() and not data.empty:
+            data = data[data["nama_pemesan"].str.contains(cari.strip(), case=False, regex=False)]
+        if data.empty:
+            st.info("Tidak ada reservasi online yang menunggu"
+                    + (" dengan nama itu" if cari.strip() else (" pada tanggal ini" if not semua else ""))
+                    + ". Centang 'Tampilkan tanggal lain' untuk melihat tanggal lain.")
+            return
+        data = data.sort_values(["tanggal", "jam"])
+
+        label = {
+            r["id_online"]: (f"{r['nama_pemesan']} · reservasi {date.fromisoformat(r['tanggal']):%d/%m/%Y} {r['jam']} · "
+                             f"{r['jumlah_orang']} org · {nama_paket.get(r['id_paket'], r['id_paket'])} · Meja {r['id_meja']} · "
+                             f"diinput {datetime.fromisoformat(r['dibuat_ts']):%d/%m %H:%M}")
+            for _, r in data.iterrows()
+        }
+        kunci_opsi = zlib.crc32("|".join(label).encode())
+        pilih = st.selectbox("Hasil pencarian", list(label), format_func=label.get, key=k(f"rsv_pilih_{kunci_opsi}"))
+        r = data[data["id_online"] == pilih].iloc[0]
+
+        sisa = store.sisa_menuju(r, now)
+        ket_waktu = f"{store.format_sisa(sisa)} lagi" if sisa > 0 else f"terlambat {store.format_sisa(-sisa)}"
+        mj = meja[meja["id_meja"] == r["id_meja"]]
+        tema.tiles([
+            ("Jam reservasi", r["jam"], f"{date.fromisoformat(r['tanggal']):%d/%m/%Y} · {ket_waktu}"),
+            ("Diinput pada", f"{datetime.fromisoformat(r['dibuat_ts']):%d/%m %H:%M}", f"{datetime.fromisoformat(r['dibuat_ts']):%Y} · akun {r['akun']}"),
+            ("Pelanggan", f"{r['jumlah_orang']} orang", store.komposisi_teks(r)),
+            ("Paket", nama_paket.get(r["id_paket"], r["id_paket"]),
+             f"{durasi_paket.get(r['id_paket'], 90)} menit · {store.rp(r['subtotal_paket'])}"),
+            ("Meja", r["id_meja"], f"{mj.iloc[0]['area']} · lantai {mj.iloc[0]['lantai']}" if not mj.empty else ""),
+        ])
+
+        # meja: sesuai reservasi, atau ganti bila meja itu masih terpakai
+        mulai = now.hour * 60 + now.minute
+        selesai = min(mulai + durasi_paket.get(r["id_paket"], 90), 24 * 60 - 1)
+        bebas = store.meja_tersedia(now.date(), mulai, selesai, int(r["jumlah_orang"]), abaikan_online=pilih)
+        bentrok = store.bentrok_meja(now.date(), mulai, selesai, r["id_meja"], abaikan_online=pilih)
+        if bentrok:
+            st.warning(f"Meja reservasi ({r['id_meja']}) masih dipakai / bentrok dengan: {', '.join(bentrok)}. "
+                       "Pilih meja lain di bawah bila perlu.")
+        opsi = {SESUAI_RESERVASI: f"{SESUAI_RESERVASI} ({r['id_meja']})"}
+        for _, m in bebas.iterrows():
+            if m["id_meja"] != r["id_meja"]:
+                opsi[m["id_meja"]] = f"{m['id_meja']} · {m['kapasitas']} orang · {m['area']} · Lantai {m['lantai']}"
+        meja_ganti = st.selectbox("Meja untuk pelanggan ini", list(opsi), format_func=opsi.get, key=k(f"rsv_meja_{pilih}"))
+
+        st.caption(f"Harga paket mengikuti reservasi (terkunci). Timer **{durasi_paket.get(r['id_paket'], 90)} menit** "
+                   "mulai saat Anda menekan konfirmasi.")
+        if st.button("✅ Konfirmasi Pesanan & Mulai Timer", type="primary", key=k(f"rsv_konfirm_{pilih}")):
+            try:
+                out = store.konfirmasi_kedatangan(user["username"], pilih, None if meja_ganti == SESUAI_RESERVASI else meja_ganti)
+            except store.DataError as e:
+                st.error(str(e))
+            else:
+                _flash("success",
+                       f"Pesanan **{out['id_pesanan']}** dimulai · {out['nama']} (reservasi {pilih}) · {out['nama_paket']} · "
+                       f"meja {out['id_meja']} · timer {out['durasi_paket']} menit berjalan. Lihat di tab **⏱️ Sedang Makan**.")
+                _naik("pesan")
+                st.rerun()
+        if sisa <= 0:
+            if st.button("🚫 Tandai No-show (pelanggan tidak datang)", key=k(f"rsv_noshow_{pilih}")):
+                try:
+                    out = store.tandai_noshow(user["username"], pilih)
+                except store.DataError as e:
+                    st.error(str(e))
+                else:
+                    _flash("success", f"Reservasi {pilih} ({out['nama']}) ditandai No-show dan dicatat ke reservasi.csv.")
+                    _naik("pesan")
+                    st.rerun()
 
 
 # ===========================================================================
@@ -369,6 +438,7 @@ def _kartu_pesanan(user, r, paket, harga, now):
     mulai_hm = r["mulai_ts"][11:16]
     batas_hm = store.dari_menit(min(store.ke_menit(mulai_hm) + durasi, 24 * 60 - 1))
     tipe_tampil = "Reservasi" if r["tipe_kedatangan"] == "Booking" else r["tipe_kedatangan"]
+    asal = f" · reservasi online {r['id_online']}" if r["id_online"] else ""
 
     if r["status"] == "Menunggu Bayar":
         badge = '<span class="badge badge-bayar">Menunggu bayar</span>'
@@ -381,7 +451,7 @@ def _kartu_pesanan(user, r, paket, harga, now):
         st.markdown(
             f'<div class="card-title">{escape(r["nama_pemesan"])}{badge}</div>'
             f'<div class="card-sub">{pid} · {tipe_tampil} · {r["jumlah_orang"]} orang · Paket {escape(nama_paket)} · '
-            f'Meja {r["id_meja"]} · mulai {mulai_hm} · batas {batas_hm}</div>',
+            f'Meja {r["id_meja"]} · mulai {mulai_hm} · batas {batas_hm}{asal}</div>',
             unsafe_allow_html=True,
         )
 
@@ -524,6 +594,7 @@ def halaman_input():
     rk = store.rekap_tanggal(hari_ini)
     st.markdown(f"**Rekap hari ini** · {hari_ini:%d/%m/%Y} (dihitung dari CSV; pesanan yang belum dibayar belum dihitung)")
     tema.tiles([
+        ("Reservasi online menunggu", store.angka(rk["online_aktif"][0]), f"{store.angka(rk['online_aktif'][1])} orang · belum datang"),
         ("Sedang makan", store.angka(rk["berjalan"][0]), f"{store.angka(rk['berjalan'][1])} orang · belum dibayar"),
         ("Transaksi (lunas)", store.angka(rk["transaksi"]), f"{store.angka(rk['pelanggan'])} pelanggan"),
         ("Pendapatan", store.rp(rk["pendapatan"]), "total bayar"),

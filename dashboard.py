@@ -24,6 +24,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import auth
 import store
 import tema
 from tema import INDIGO, ORANYE, ORANYE_MUDA, ORANYE_PUDAR, TEKS
@@ -114,6 +115,7 @@ def muat_data(versi):
 # HALAMAN
 # ===========================================================================
 def halaman_dashboard():
+    auth.wajib("pegawai", "bos")  # UBAH: peran yang boleh melihat statistik (pelanggan tidak boleh)
     trx, paket, total_meja = muat_data(store.versi_data())
 
     hari_ini = store.sekarang().date()

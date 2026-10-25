@@ -1,5 +1,5 @@
 """
-auth.py — LOGIN (EKSPERIMEN) dengan dua peran: `pegawai` dan `bos`.
+auth.py — LOGIN (EKSPERIMEN) dengan tiga peran: `pegawai`, `bos`, dan `pelanggan` (reservasi online).
 
 ╔══════════════════════ PETA UBAH CEPAT ═══════════════════════╗
 ║ Mau ubah ...                       → cari bagian ...          ║
@@ -24,7 +24,7 @@ import streamlit as st
 
 import tema
 
-ROLE_VALID = ("pegawai", "bos")  # UBAH: kalau menambah peran baru (mis. "kasir"), tambahkan di sini dan di AKSES (app.py)
+ROLE_VALID = ("pegawai", "bos", "pelanggan")  # UBAH: kalau menambah peran baru (mis. "kasir"), tambahkan di sini dan di AKSES (app.py)
 
 # ===== AKUN DEMO =====
 # UBAH: ganti username/password di bawah. Hanya dipakai bila Secrets belum diisi.
@@ -33,6 +33,10 @@ ROLE_VALID = ("pegawai", "bos")  # UBAH: kalau menambah peran baru (mis. "kasir"
 AKUN_DEMO = {
     "pegawai": {"password": "pegawai123", "role": "pegawai", "nama": "Pegawai"},
     "bos": {"password": "bos123", "role": "bos", "nama": "Bos"},
+    # UBAH: akun pelanggan (reservasi online). Tambah akun lain dengan pola yang sama; role harus "pelanggan".
+    "pelanggan1": {"password": "pelanggan123", "role": "pelanggan", "nama": "Pelanggan 1"},
+    "pelanggan2": {"password": "pelanggan123", "role": "pelanggan", "nama": "Pelanggan 2"},
+    "pelanggan3": {"password": "pelanggan123", "role": "pelanggan", "nama": "Pelanggan 3"},
 }
 
 MAKS_GAGAL = 5     # UBAH: berapa kali salah password sebelum dikunci sementara
@@ -84,7 +88,7 @@ def tampil_login():
             st.markdown(
                 tema.brand_html()
                 + '<div class="login-title">Masuk ke dashboard</div>'
-                + '<div class="login-sub">Gunakan akun pegawai atau bos.</div>',
+                + '<div class="login-sub">Gunakan akun pegawai, bos, atau pelanggan.</div>',
                 unsafe_allow_html=True,
             )
             terkunci = st.session_state.get("kunci_sampai", 0) - time.time()

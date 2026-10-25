@@ -59,8 +59,28 @@ def _kartu_berjalan():
         _tabel(pd.DataFrame(baris), 38 + 35 * min(len(baris), 8))
 
 
+def _kartu_online():
+    """Reservasi dari akun pelanggan (hanya dilihat). Konfirmasi kedatangan dilakukan pegawai di halaman Input Pesanan."""
+    ol = store.daftar_reservasi_online()
+    paket = store.baca("paket")
+    nama_paket = dict(zip(paket["id_paket"], paket["nama_paket"]))
+    with st.container(key="card_online"):
+        tema.judul_kartu("Reservasi Online", "Reservasi dari akun pelanggan (100 terbaru). Hanya untuk dilihat.")
+        if ol.empty:
+            st.info("Belum ada reservasi online dari pelanggan.")
+            return
+        tampil = ol.sort_values(["tanggal", "jam"], ascending=False).head(100)
+        baris = [{
+            "ID": r["id_online"], "Nama": r["nama_pemesan"], "Akun": r["akun"], "Tanggal": r["tanggal"], "Jam": r["jam"],
+            "Orang": r["jumlah_orang"], "Paket": nama_paket.get(r["id_paket"], r["id_paket"]), "Meja": r["id_meja"],
+            "Diinput": r["dibuat_ts"][:16], "Status": r["status"],
+        } for _, r in tampil.iterrows()]
+        _tabel(pd.DataFrame(baris), 38 + 35 * min(len(baris), 8))
+
+
 def _tab_baru():
     _kartu_berjalan()
+    _kartu_online()
     log = store.baca(store.LOG_NAMA)
     if log.empty:
         st.info("Belum ada data yang masuk ke CSV lewat aplikasi. Data muncul di sini setelah pegawai menyelesaikan pembayaran.")
